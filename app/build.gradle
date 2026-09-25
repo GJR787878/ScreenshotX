@@ -3,15 +3,15 @@ plugins {
 }
 
 android {
-    namespace 'io.github.gjr787878.glassshot'
+    namespace 'io.github.gjr787878.screenshotx'
     compileSdk 34
 
     defaultConfig {
-        applicationId "io.github.gjr787878.glassshot"
+        applicationId "io.github.gjr787878.screenshotx"
         minSdk 31
         targetSdk 34
-        versionCode 3
-        versionName "1.1.0"
+        versionCode 1
+        versionName "1.0.0"
     }
 
     signingConfigs {

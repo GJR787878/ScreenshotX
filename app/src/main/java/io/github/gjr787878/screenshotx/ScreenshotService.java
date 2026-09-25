@@ -1,4 +1,4 @@
-package io.github.gjr787878.glassshot;
+package io.github.gjr787878.screenshotx;
 
 import android.app.Notification;
 import android.app.NotificationChannel;
@@ -18,7 +18,7 @@ import java.io.FileOutputStream;
 
 public class ScreenshotService extends Service {
 
-    public static final String ACTION_SHOOT = "io.github.gjr787878.glassshot.SHOOT";
+    public static final String ACTION_SHOOT = "io.github.gjr787878.screenshotx.SHOOT";
 
     @Override
     public IBinder onBind(Intent i) { return null; }
