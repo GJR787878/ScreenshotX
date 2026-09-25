@@ -127,7 +127,7 @@ public class EditorActivity extends Activity {
         wlabel.setText("粗细"); wlabel.setTextColor(0xCCFFFFFF); wlabel.setTextSize(12);
         widthRow.addView(wlabel,new LinearLayout.LayoutParams(-2,-2));
         android.widget.SeekBar widthSeek=new android.widget.SeekBar(this);
-        widthSeek.setMax(270); widthSeek.setProgress(70); // 0.3x ~ 3.0x，默认1.0
+        widthSeek.setMax(570); widthSeek.setProgress(70); // 0.3x ~ 6.0x，默认1.0
         widthSeek.getProgressDrawable().setColorFilter(0xFF9AA0AA,
                 android.graphics.PorterDuff.Mode.SRC_IN);
         widthSeek.getThumb().setColorFilter(0xFFFFFFFF,

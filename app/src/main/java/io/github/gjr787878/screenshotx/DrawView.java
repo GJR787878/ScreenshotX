@@ -27,7 +27,7 @@ public class DrawView extends View {
     private float widthScale = 1f; // 全局粗细倍率
 
     public void setWidthScale(float s) {
-        widthScale = Math.max(0.2f, Math.min(4f, s));
+        widthScale = Math.max(0.2f, Math.min(8f, s));
         applyStyle();
     }
     public float getWidthScale(){return widthScale;}
@@ -78,7 +78,7 @@ public class DrawView extends View {
         }else{
             paint.setXfermode(null);
             paint.setColor(color);
-            paint.setAlpha(tool==MARKER?60:255);
+            paint.setAlpha(tool==MARKER?40:255);
         }
     }
 
