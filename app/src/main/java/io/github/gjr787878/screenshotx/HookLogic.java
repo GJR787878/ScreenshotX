@@ -12,24 +12,33 @@ import java.util.Date;
 import java.util.Locale;
 import java.util.Set;
 
-import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
-import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-public class HookMain implements IXposedHookLoadPackage {
+/** 实际 hook 逻辑，由现代入口 ModernEntry 调用。hook 仍用 LSPosed 兼容的 XposedBridge API。 */
+public class HookLogic {
 
-    private static final String TAG = "ScreenshotX";
     private static final String LOG_FILE = "/data/system/screenshotx_diag.log";
     private static Context sysContext;
     private static long lastTrigger = 0;
     private static final Handler OWN = new Handler(Looper.getMainLooper());
+    private static boolean logInited = false;
 
-    private static void log(String msg) {
+    public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
                 + " " + msg;
-        XposedBridge.log(TAG + ": " + msg);
+        XposedBridge.log("ScreenshotX: " + msg);
+        if (!logInited) {
+            logInited = true;
+            try {
+                FileWriter h = new FileWriter(new File(LOG_FILE), false);
+                h.write("=== ScreenshotX diag "
+                        + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())
+                        + " ===\n");
+                h.close();
+            } catch (Throwable ignored) {}
+        }
         try {
             FileWriter fw = new FileWriter(new File(LOG_FILE), true);
             fw.write(line + "\n");
@@ -37,31 +46,8 @@ public class HookMain implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {}
     }
 
-    private static boolean logInited = false;
-
-    private static synchronized void initLog() {
-        if (logInited) return;
-        logInited = true;
-        try {
-            FileWriter fw = new FileWriter(new File(LOG_FILE), false);
-            fw.write("=== ScreenshotX diag "
-                    + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())
-                    + " ===\n");
-            fw.close();
-        } catch (Throwable ignored) {}
-    }
-
-    @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
-        initLog();
-        log("handleLoadPackage pkg=" + lp.packageName
-                + " process=" + (lp.processName == null ? "null" : lp.processName));
-        if (!"android".equals(lp.packageName)) {
-            log("skip (not android)");
-            return;
-        }
-        log("in system framework, start hooking");
-        ClassLoader cl = lp.classLoader;
+    public static void install(ClassLoader cl) {
+        log("install: start hooking in system_server");
 
         Class<?> pwm;
         try {
@@ -73,6 +59,7 @@ public class HookMain implements IXposedHookLoadPackage {
             return;
         }
 
+        // 抓系统 Context
         try {
             Set<?> r = XposedBridge.hookAllMethods(pwm, "init", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
@@ -87,6 +74,7 @@ public class HookMain implements IXposedHookLoadPackage {
             log("init hook failed: " + t);
         }
 
+        // 触发点：保留系统延迟窗口（不锁屏），自己延迟相同时长后 fire
         try {
             Set<?> r = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord",
                     new XC_MethodHook() {
@@ -102,7 +90,7 @@ public class HookMain implements IXposedHookLoadPackage {
                         delay = (Long) p.args[1];
                     }
                     log("chord HIT, delay=" + delay + ", args=" + p.args.length);
-                    OWN.postDelayed(HookMain.this::fire, Math.max(0, delay));
+                    OWN.postDelayed(HookLogic::fire, Math.max(0, delay));
                 }
             });
             log("interceptScreenshotChord hooks=" + r.size());
@@ -110,6 +98,7 @@ public class HookMain implements IXposedHookLoadPackage {
             log("interceptScreenshotChord hook failed: " + t);
         }
 
+        // 取消系统截屏最终出口
         try {
             Class<?> sh = XposedHelpers.findClass(
                     "com.android.internal.util.ScreenshotHelper", cl);
@@ -129,10 +118,10 @@ public class HookMain implements IXposedHookLoadPackage {
             log("ScreenshotHelper hook failed: " + t);
         }
 
-        log("hooking done");
+        log("install: hooking done");
     }
 
-    private void fire() {
+    private static void fire() {
         Context c = sysContext;
         if (c == null) {
             log("fire skipped, no context");
