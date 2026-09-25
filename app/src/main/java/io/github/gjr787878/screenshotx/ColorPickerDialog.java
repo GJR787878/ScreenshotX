@@ -200,5 +200,5 @@ public class ColorPickerDialog {
 
     private View stretch(){View v=new View(ctx);v.setLayoutParams(new LinearLayout.LayoutParams(0,1,1));return v;}
     private View box(int w,int h){View v=new View(ctx);v.setLayoutParams(new LinearLayout.LayoutParams(w,h));return v;}
-    private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density);}
+    private int dp(float v){return (int)(v*ctx.getResources().getDisplayMetrics().density);}
 }
