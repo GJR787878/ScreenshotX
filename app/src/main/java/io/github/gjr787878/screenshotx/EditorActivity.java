@@ -118,6 +118,30 @@ public class EditorActivity extends Activity {
         wheelWrap.addView(wheel,new LinearLayout.LayoutParams(dp(40),dp(40)));
         penBar.addView(wheelWrap,new LinearLayout.LayoutParams(dp(50),dp(60)));
 
+        // 粗细滑块行(笔条与功能行之间)
+        LinearLayout widthRow=new LinearLayout(this);
+        widthRow.setOrientation(LinearLayout.HORIZONTAL);
+        widthRow.setGravity(Gravity.CENTER_VERTICAL);
+        widthRow.setPadding(dp(10),0,dp(10),0);
+        TextView wlabel=new TextView(this);
+        wlabel.setText("粗细"); wlabel.setTextColor(0xCCFFFFFF); wlabel.setTextSize(12);
+        widthRow.addView(wlabel,new LinearLayout.LayoutParams(-2,-2));
+        android.widget.SeekBar widthSeek=new android.widget.SeekBar(this);
+        widthSeek.setMax(270); widthSeek.setProgress(70); // 0.3x ~ 3.0x，默认1.0
+        widthSeek.getProgressDrawable().setColorFilter(0xFF9AA0AA,
+                android.graphics.PorterDuff.Mode.SRC_IN);
+        widthSeek.getThumb().setColorFilter(0xFFFFFFFF,
+                android.graphics.PorterDuff.Mode.SRC_IN);
+        widthRow.addView(widthSeek,new LinearLayout.LayoutParams(0,dp(36),1));
+        widthSeek.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(android.widget.SeekBar sb,int p,boolean fromUser){
+                drawView.setWidthScale(0.3f+p/100f);
+            }
+            @Override public void onStartTrackingTouch(android.widget.SeekBar sb){}
+            @Override public void onStopTrackingTouch(android.widget.SeekBar sb){}
+        });
+        bottom.addView(widthRow,new LinearLayout.LayoutParams(-1,dp(42)));
+
         // 功能行
         LinearLayout funcs=new LinearLayout(this);
         funcs.setGravity(Gravity.CENTER);

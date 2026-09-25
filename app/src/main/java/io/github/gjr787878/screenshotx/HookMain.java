@@ -2,6 +2,7 @@ package io.github.gjr787878.screenshotx;
 
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -13,6 +14,7 @@ public class HookMain implements IXposedHookLoadPackage {
 
     private static Context sysContext;
     private static long lastTrigger = 0;
+    private static final int MSG_SCREENSHOT_CHORD = 16;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
@@ -27,7 +29,7 @@ public class HookMain implements IXposedHookLoadPackage {
             return;
         }
 
-        // 1) 从 init() 抓系统 Context
+        // 1) 抓系统 Context
         XposedBridge.hookAllMethods(pwm, "init", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (p.args.length > 0 && p.args[0] instanceof Context) {
@@ -36,34 +38,30 @@ public class HookMain implements IXposedHookLoadPackage {
             }
         });
 
-        // 2) 拦截系统截屏的「最终动作」handleScreenShot。
-        //    走到这里时组合键状态机已完整执行(系统已设 mPowerKeyHandled、取消短按锁屏)，
-        //    所以不会锁屏；我们只替换截屏内容，完全不碰电源键，正常锁屏不受影响。
-        XC_MethodHook shotHook = new XC_MethodHook() {
-            @Override protected void beforeHookedMethod(MethodHookParam p) {
-                long now = System.currentTimeMillis();
-                if (now - lastTrigger < 1500) { p.setResult(null); return; }
-                lastTrigger = now;
-                XposedBridge.log("ScreenshotX: handleScreenShot intercepted");
-                fire();
-                p.setResult(null); // 阻止系统截屏
-            }
-        };
-        int n = XposedBridge.hookAllMethods(pwm, "handleScreenShot", shotHook).size();
-        XposedBridge.log("ScreenshotX: handleScreenShot hooks=" + n);
-
-        // Fallback：旧版系统没有 handleScreenShot，则拦截 interceptScreenshotChord
-        if (n == 0) {
-            XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    long now = System.currentTimeMillis();
-                    if (now - lastTrigger < 1500) { p.setResult(null); return; }
-                    lastTrigger = now;
-                    fire();
-                    p.setResult(null);
+        // 2) Hook interceptScreenshotChord —— 让它正常执行(保留系统的组合键延迟窗口，
+        //    电源键 up 在窗口内不锁屏)，然后安排相同时长的任务：
+        //    窗口结束时取消系统截屏消息、替换成我们的截屏。
+        XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", new XC_MethodHook() {
+            @Override protected void afterHookedMethod(MethodHookParam p) {
+                long delay = 0;
+                if (p.args.length >= 2 && p.args[1] instanceof Long) {
+                    delay = (Long) p.args[1];
                 }
-            });
-        }
+                long now = System.currentTimeMillis();
+                if (now - lastTrigger < 1500) return;
+                lastTrigger = now;
+
+                final Handler handler = (Handler)
+                        XposedHelpers.getObjectField(p.thisObject, "mHandler");
+                final Runnable replace = () -> {
+                    handler.removeMessages(MSG_SCREENSHOT_CHORD); // 取消系统截屏
+                    XposedBridge.log("ScreenshotX: replace system screenshot");
+                    fire();
+                };
+                // 略早于系统消息执行，确保先取消
+                handler.postDelayed(replace, Math.max(0, delay - 5));
+            }
+        });
     }
 
     private void fire() {

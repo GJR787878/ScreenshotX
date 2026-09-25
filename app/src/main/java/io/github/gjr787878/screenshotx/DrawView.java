@@ -24,6 +24,13 @@ public class DrawView extends View {
     private final Path path = new Path();
     private float curX, curY;
     private int tool = BALL, color = Color.RED;
+    private float widthScale = 1f; // 全局粗细倍率
+
+    public void setWidthScale(float s) {
+        widthScale = Math.max(0.2f, Math.min(4f, s));
+        applyStyle();
+    }
+    public float getWidthScale(){return widthScale;}
 
     // FIT_CENTER 显示参数
     private float scale=1, drawLeft=0, drawTop=0;
@@ -64,14 +71,14 @@ public class DrawView extends View {
     }
 
     private void applyStyle(){
-        paint.setStrokeWidth(widthFor(tool));
+        paint.setStrokeWidth(widthFor(tool)*widthScale);
         if(tool==ERASER){
             paint.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
             paint.setAlpha(255);
         }else{
             paint.setXfermode(null);
             paint.setColor(color);
-            paint.setAlpha(tool==MARKER?90:255);
+            paint.setAlpha(tool==MARKER?60:255);
         }
     }
 
