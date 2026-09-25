@@ -6,19 +6,15 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.os.IBinder;
 import android.widget.Toast;
 
 import java.io.DataOutputStream;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 
 public class ScreenshotService extends Service {
 
     public static final String ACTION_SHOOT = "io.github.gjr787878.screenshotx.SHOOT";
+    private static final String TMP_PATH = "/data/local/tmp/screenshotx_shot.png";
 
     @Override
     public IBinder onBind(Intent i) { return null; }
@@ -38,9 +34,9 @@ public class ScreenshotService extends Service {
     }
 
     private Notification buildNotification() {
-        String ch = "glassshot";
+        String ch = "screenshotx";
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
-        NotificationChannel channel = new NotificationChannel(ch, "GlassShot", NotificationManager.IMPORTANCE_LOW);
+        NotificationChannel channel = new NotificationChannel(ch, "ScreenshotX", NotificationManager.IMPORTANCE_LOW);
         nm.createNotificationChannel(channel);
 
         Intent shootIntent = new Intent(this, ScreenshotService.class);
@@ -48,7 +44,7 @@ public class ScreenshotService extends Service {
         PendingIntent shootPi = PendingIntent.getService(this, 0, shootIntent, PendingIntent.FLAG_IMMUTABLE);
 
         return new Notification.Builder(this, ch)
-                .setContentTitle("GlassShot")
+                .setContentTitle("ScreenshotX")
                 .setContentText("点右边按钮截屏")
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
                 .addAction(new Notification.Action.Builder(
@@ -59,18 +55,22 @@ public class ScreenshotService extends Service {
 
     private void shoot() {
         try {
-            File tmp = new File(getCacheDir(), "shot.png");
-            // 用 Root screencap
+            // 先删旧文件
+            Runtime.getRuntime().exec(new String[]{"su", "-c", "rm -f " + TMP_PATH}).waitFor();
+
+            // 用 Root screencap 保存到 /data/local/tmp（root 可写）
             Process p = Runtime.getRuntime().exec("su");
             DataOutputStream os = new DataOutputStream(p.getOutputStream());
-            os.writeBytes("screencap -p " + tmp.getAbsolutePath() + "\n");
+            os.writeBytes("screencap -p " + TMP_PATH + "\n");
+            os.writeBytes("chmod 666 " + TMP_PATH + "\n");
             os.writeBytes("exit\n");
             os.flush();
             p.waitFor();
 
+            java.io.File tmp = new java.io.File(TMP_PATH);
             if (tmp.exists() && tmp.length() > 0) {
                 Intent i = new Intent(this, EditorActivity.class);
-                i.putExtra("path", tmp.getAbsolutePath());
+                i.putExtra("path", TMP_PATH);
                 i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 startActivity(i);
             } else {

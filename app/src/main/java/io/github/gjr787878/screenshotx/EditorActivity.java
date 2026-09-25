@@ -5,8 +5,6 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.VectorDrawable;
-import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.util.TypedValue;
 import android.view.Gravity;
@@ -19,14 +17,11 @@ import android.widget.Toast;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.util.ArrayList;
-import java.util.List;
 
 public class EditorActivity extends Activity {
 
     private Bitmap srcBmp;
     private ImageView preview;
-    private List<View> bottomBtns = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle b) {
@@ -45,7 +40,7 @@ public class EditorActivity extends Activity {
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         FrameLayout.LayoutParams pp = new FrameLayout.LayoutParams(-1, -1);
         pp.topMargin = dp(70);
-        pp.bottomMargin = dp(200);
+        pp.bottomMargin = dp(180);
         root.addView(preview, pp);
 
         // 顶部工具栏（删除/撤销/重做/分享/完成）
@@ -57,35 +52,32 @@ public class EditorActivity extends Activity {
         tp.gravity = Gravity.TOP;
         root.addView(topBar, tp);
 
-        // 顶部图标按钮
         addTopIcon(topBar, android.R.drawable.ic_menu_delete, v -> finish());
         addTopIcon(topBar, android.R.drawable.ic_menu_revert, v ->
                 Toast.makeText(this, "撤销", Toast.LENGTH_SHORT).show());
         addTopIcon(topBar, android.R.drawable.ic_menu_rotate, v ->
                 Toast.makeText(this, "重做", Toast.LENGTH_SHORT).show());
-        // 分享占中间
         View spacer = new View(this);
-        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(0, 1, 1);
-        topBar.addView(spacer, sp);
+        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
         addTopIcon(topBar, android.R.drawable.ic_menu_share, v ->
                 Toast.makeText(this, "分享", Toast.LENGTH_SHORT).show());
         addTopIcon(topBar, android.R.drawable.ic_menu_save, v -> save());
 
-        // 底部工具栏（圆形按钮+文字）
+        // 底部工具栏（毛玻璃胶囊）
         LinearLayout bottomBar = new LinearLayout(this);
         bottomBar.setOrientation(LinearLayout.HORIZONTAL);
         bottomBar.setGravity(Gravity.CENTER);
-        bottomBar.setPadding(dp(8), dp(16), dp(8), dp(24));
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(140));
+        bottomBar.setPadding(dp(12), dp(16), dp(12), dp(24));
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(160));
         bp.gravity = Gravity.BOTTOM;
         root.addView(bottomBar, bp);
 
-        addBottomItem(bottomBar, "标记", android.R.drawable.ic_menu_edit, true);
-        addBottomItem(bottomBar, "文字", android.R.drawable.ic_menu_edit, false);
-        addBottomItem(bottomBar, "马赛克", android.R.drawable.ic_menu_gallery, false);
-        addBottomItem(bottomBar, "识文", android.R.drawable.ic_menu_search, false);
-        addBottomItem(bottomBar, "裁剪", android.R.drawable.ic_menu_crop, false);
-        addBottomItem(bottomBar, "高级", android.R.drawable.ic_menu_manage, false);
+        // 五个按钮：标记/文字/马赛克/识文/裁剪（去掉高级）
+        addBottomItem(bottomBar, "标记", true);
+        addBottomItem(bottomBar, "文字", false);
+        addBottomItem(bottomBar, "马赛克", false);
+        addBottomItem(bottomBar, "识文", false);
+        addBottomItem(bottomBar, "裁剪", false);
 
         setContentView(root);
     }
@@ -96,42 +88,38 @@ public class EditorActivity extends Activity {
         iv.setColorFilter(0xFFFFFFFF);
         iv.setPadding(dp(12), dp(12), dp(12), dp(12));
         iv.setOnClickListener(l);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
-        bar.addView(iv, lp);
+        bar.addView(iv, new LinearLayout.LayoutParams(dp(44), dp(44)));
     }
 
-    private void addBottomItem(LinearLayout bar, String label, int iconRes, boolean selected) {
+    private void addBottomItem(LinearLayout bar, String label, boolean selected) {
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.VERTICAL);
         item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(12), dp(10), dp(12), dp(10));
 
-        // 圆形背景
-        GradientDrawable circle = new GradientDrawable();
-        circle.setShape(GradientDrawable.OVAL);
-        circle.setColor(selected ? 0xFFFFFFFF : 0x33FFFFFF);
-        item.setBackground(circle);
-
-        ImageView iv = new ImageView(this);
-        iv.setImageResource(iconRes);
-        iv.setColorFilter(selected ? 0xFF000000 : 0xFFFFFFFF);
-        LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(dp(28), dp(28));
-        ip.gravity = Gravity.CENTER;
-        item.addView(iv, ip);
-
-        LinearLayout.LayoutParams circleLp = new LinearLayout.LayoutParams(dp(52), dp(52));
-        circleLp.gravity = Gravity.CENTER;
-        item.setLayoutParams(circleLp);
+        // 毛玻璃胶囊背景
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp(24));
+        if (selected) {
+            bg.setColor(0x55FFFFFF);
+            bg.setStroke(dp(1), 0xFFFFFFFF);
+        } else {
+            bg.setColor(0x22FFFFFF);
+            bg.setStroke(dp(1), 0x40FFFFFF);
+        }
+        item.setBackground(bg);
 
         TextView tv = new TextView(this);
         tv.setText(label);
-        tv.setTextColor(0xFFFFFFFF);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        tv.setTextColor(selected ? 0xFFFFFFFF : 0xCCFFFFFF);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
         tv.setGravity(Gravity.CENTER);
-        tv.setPadding(0, dp(6), 0, 0);
-        LinearLayout.LayoutParams tp = new LinearLayout.LayoutParams(-2, -2);
-        tp.gravity = Gravity.CENTER;
-        bar.addView(item, new LinearLayout.LayoutParams(0, -2, 1));
-        bar.addView(tv, tp);
+        item.addView(tv);
+
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, dp(48), 1);
+        lp.setMargins(dp(4), 0, dp(4), 0);
+        bar.addView(item, lp);
     }
 
     private void save() {
