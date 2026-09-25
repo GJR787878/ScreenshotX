@@ -6,8 +6,8 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.PorterDuff;
 import android.view.MotionEvent;
-import android.graphics.Rect;
 import android.view.View;
 
 import java.util.ArrayList;
@@ -15,109 +15,125 @@ import java.util.List;
 
 public class DrawView extends View {
 
-    private Bitmap srcBitmap;
-    private Bitmap drawBitmap;
-    private Canvas drawCanvas;
-    private Paint paint;
-    private Path currentPath;
-    private List<Path> paths = new ArrayList<>();
-    private List<Path> undonePaths = new ArrayList<>();
-    private float scale = 1f;
-    private float offsetX = 0, offsetY = 0;
+    public static final int BALL=0, MARKER=1, PENCIL=2, FOUNTAIN=3, ERASER=4;
+
+    private Bitmap base;          // 原截图
+    private Bitmap overlay;       // 标注层(透明)
+    private Canvas overlayCanvas;
+    private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG|Paint.DITHER_FLAG);
+    private final Path path = new Path();
+    private float curX, curY;
+
+    private int tool = BALL;
+    private int color = Color.RED;
+
+    // 撤销栈：保存每一笔之前的 overlay 快照
+    private final List<Bitmap> undoStack = new ArrayList<>();
+    private final List<Bitmap> redoStack = new ArrayList<>();
 
     public DrawView(Context c) {
         super(c);
-        paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setColor(Color.RED);
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(7);
-        paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
+        paint.setStrokeCap(Paint.Cap.ROUND);
     }
 
-    public void setBitmap(Bitmap bmp) {
-        srcBitmap = bmp;
-        requestLayout();
+    public void setBitmap(Bitmap b) {
+        base = b.copy(Bitmap.Config.ARGB_8888, true);
+        overlay = Bitmap.createBitmap(base.getWidth(), base.getHeight(), Bitmap.Config.ARGB_8888);
+        overlayCanvas = new Canvas(overlay);
+        invalidate();
     }
 
-    @Override
-    protected void onSizeChanged(int w, int h, int oldw, int oldh) {
-        super.onSizeChanged(w, h, oldw, oldh);
-        if (srcBitmap == null) return;
+    public void setTool(int t) { tool = t; applyStyle(); }
+    public void setColor(int c) { color = c; if (tool != ERASER) applyStyle(); }
+    public int getColor() { return color; }
 
-        float scaleX = (float) w / srcBitmap.getWidth();
-        float scaleY = (float) h / srcBitmap.getHeight();
-        scale = Math.min(scaleX, scaleY);
-        int dw = (int)(srcBitmap.getWidth() * scale);
-        int dh = (int)(srcBitmap.getHeight() * scale);
-        offsetX = (w - dw) / 2f;
-        offsetY = (h - dh) / 2f;
-
-        drawBitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
-        drawCanvas = new Canvas(drawBitmap);
+    private float widthFor(int t) {
+        switch (t) {
+            case MARKER: return base!=null? base.getWidth()*0.018f:22;
+            case ERASER: return base!=null? base.getWidth()*0.03f:28;
+            case PENCIL: return base!=null? base.getWidth()*0.0035f:4;
+            case BALL:   return base!=null? base.getWidth()*0.0045f:5;
+            case FOUNTAIN:return base!=null? base.getWidth()*0.006f:7;
+        }
+        return 6;
     }
 
-    @Override
-    protected void onDraw(Canvas canvas) {
-        super.onDraw(canvas);
-        if (srcBitmap == null) return;
-
-        int dw = (int)(srcBitmap.getWidth() * scale);
-        int dh = (int)(srcBitmap.getHeight() * scale);
-        Rect dst = new Rect((int)offsetX, (int)offsetY, (int)offsetX + dw, (int)offsetY + dh);
-        canvas.drawBitmap(srcBitmap, null, dst, null);
-
-        if (drawBitmap != null) canvas.drawBitmap(drawBitmap, 0, 0, null);
+    private void applyStyle() {
+        paint.setStrokeWidth(widthFor(tool));
+        if (tool == ERASER) {
+            paint.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+            paint.setAlpha(255);
+        } else {
+            paint.setXfermode(null);
+            paint.setColor(color);
+            paint.setAlpha(tool == MARKER ? 90 : 255);
+        }
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        float x = event.getX();
-        float y = event.getY();
+    @Override protected void onDraw(Canvas canvas) {
+        if (base != null) canvas.drawBitmap(base, 0, 0, null);
+        if (overlay != null) canvas.drawBitmap(overlay, 0, 0, null);
+    }
 
-        switch (event.getAction()) {
+    @Override public boolean onTouchEvent(MotionEvent e) {
+        if (base == null) return false;
+        // 把 View 坐标映射到底图像素
+        float sx = base.getWidth() / (float) getWidth();
+        float sy = base.getHeight() / (float) getHeight();
+        float x = e.getX() * sx, y = e.getY() * sy;
+        switch (e.getAction()) {
             case MotionEvent.ACTION_DOWN:
-                currentPath = new Path();
-                currentPath.moveTo(x, y);
+                pushUndo();
+                applyStyle();
+                path.reset();
+                path.moveTo(x, y);
+                curX = x; curY = y;
+                overlayCanvas.drawPoint(x, y, paint);
                 break;
             case MotionEvent.ACTION_MOVE:
-                currentPath.lineTo(x, y);
-                drawCanvas.drawPath(currentPath, paint);
+                path.quadTo(curX, curY, (x+curX)/2, (y+curY)/2);
+                overlayCanvas.drawPath(path, paint);
+                curX = x; curY = y;
                 break;
             case MotionEvent.ACTION_UP:
-                paths.add(currentPath);
-                currentPath = null;
+                overlayCanvas.drawPath(path, paint);
+                path.reset();
                 break;
+            default: return false;
         }
         invalidate();
         return true;
     }
 
+    private void pushUndo() {
+        redoStack.clear();
+        undoStack.add(overlay.copy(Bitmap.Config.ARGB_8888, false));
+        if (undoStack.size() > 25) undoStack.remove(0);
+    }
+
     public void undo() {
-        if (!paths.isEmpty()) {
-            undonePaths.add(paths.remove(paths.size() - 1));
-            redrawAll();
-        }
+        if (undoStack.isEmpty() || overlay==null) return;
+        redoStack.add(overlay.copy(Bitmap.Config.ARGB_8888, false));
+        Bitmap prev = undoStack.remove(undoStack.size()-1);
+        overlay.eraseColor(Color.TRANSPARENT);
+        new Canvas(overlay).drawBitmap(prev, 0, 0, null);
+        invalidate();
     }
 
     public void redo() {
-        if (!undonePaths.isEmpty()) {
-            paths.add(undonePaths.remove(undonePaths.size() - 1));
-            redrawAll();
-        }
-    }
-
-    private void redrawAll() {
-        if (drawBitmap == null) return;
-        drawBitmap.eraseColor(Color.TRANSPARENT);
-        for (Path p : paths) drawCanvas.drawPath(p, paint);
+        if (redoStack.isEmpty() || overlay==null) return;
+        undoStack.add(overlay.copy(Bitmap.Config.ARGB_8888, false));
+        Bitmap next = redoStack.remove(redoStack.size()-1);
+        overlay.eraseColor(Color.TRANSPARENT);
+        new Canvas(overlay).drawBitmap(next, 0, 0, null);
         invalidate();
     }
 
     public Bitmap getResultBitmap() {
-        Bitmap result = Bitmap.createBitmap(getWidth(), getHeight(), Bitmap.Config.ARGB_8888);
-        Canvas c = new Canvas(result);
-        draw(c);
-        return result;
+        Bitmap out = base.copy(Bitmap.Config.ARGB_8888, true);
+        new Canvas(out).drawBitmap(overlay, 0, 0, null);
+        return out;
     }
 }
