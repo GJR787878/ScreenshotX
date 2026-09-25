@@ -1,14 +1,23 @@
 package io.github.gjr787878.screenshotx;
 
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public class MainActivity extends Activity {
 
@@ -30,7 +39,6 @@ public class MainActivity extends Activity {
         title.setPadding(0, 0, 0, dp(20));
         root.addView(title);
 
-        // Root 授权状态（打开 App 即在前台主动请求一次，保证 Magisk 弹窗可交互）
         rootStatus = new TextView(this);
         rootStatus.setText("Root 状态：检测中…");
         rootStatus.setTextColor(0xFFCCCCCC);
@@ -63,10 +71,14 @@ public class MainActivity extends Activity {
         });
         root.addView(test);
 
+        Button export = new Button(this);
+        export.setText("导出诊断日志 (111.zip)");
+        export.setOnClickListener(v -> exportDiag());
+        root.addView(export);
+
         setContentView(root);
     }
 
-    /** 在前台主动执行 su，触发 Magisk 授权弹窗并回读结果 */
     private void requestRoot() {
         new Thread(() -> {
             boolean ok = false;
@@ -87,6 +99,51 @@ public class MainActivity extends Activity {
             runOnUiThread(() -> rootStatus.setText(granted
                     ? "Root 状态：已授权 ✓"
                     : "Root 状态：未授权 ✗（请在 Magisk 中允许）"));
+        }).start();
+    }
+
+    /** 从 /data/local/tmp 读诊断日志，打包为 111.zip 写入 Download */
+    private void exportDiag() {
+        new Thread(() -> {
+            try {
+                Process p = Runtime.getRuntime().exec("su");
+                DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                os.writeBytes("cat /data/local/tmp/screenshotx_diag.log\n");
+                os.writeBytes("exit\n");
+                os.flush();
+                InputStream is = p.getInputStream();
+                ByteArrayOutputStream buf = new ByteArrayOutputStream();
+                byte[] tmp = new byte[8192];
+                int n;
+                while ((n = is.read(tmp)) > 0) buf.write(tmp, 0, n);
+                p.waitFor();
+                byte[] logData = buf.toByteArray();
+
+                ByteArrayOutputStream zipBuf = new ByteArrayOutputStream();
+                ZipOutputStream zos = new ZipOutputStream(zipBuf);
+                zos.putNextEntry(new ZipEntry("screenshotx_diag.log"));
+                zos.write(logData);
+                zos.closeEntry();
+                zos.close();
+
+                ContentValues values = new ContentValues();
+                values.put(MediaStore.Downloads.DISPLAY_NAME, "111.zip");
+                values.put(MediaStore.Downloads.MIME_TYPE, "application/zip");
+                values.put(MediaStore.Downloads.RELATIVE_PATH,
+                        Environment.DIRECTORY_DOWNLOADS);
+                Uri uri = getContentResolver().insert(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+                OutputStream out = getContentResolver().openOutputStream(uri);
+                out.write(zipBuf.toByteArray());
+                out.close();
+
+                runOnUiThread(() -> Toast.makeText(this,
+                        "已导出 Download/111.zip（" + logData.length + " 字节）",
+                        Toast.LENGTH_LONG).show());
+            } catch (Throwable t) {
+                runOnUiThread(() -> Toast.makeText(this,
+                        "导出失败: " + t, Toast.LENGTH_LONG).show());
+            }
         }).start();
     }
 

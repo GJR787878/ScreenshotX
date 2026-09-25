@@ -21,7 +21,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class HookMain implements IXposedHookLoadPackage {
 
     private static final String TAG = "ScreenshotX";
-    private static final String LOG_FILE = "/storage/emulated/0/Download/111.txt";
+    private static final String LOG_FILE = "/data/local/tmp/screenshotx_diag.log";
     private static Context sysContext;
     private static long lastTrigger = 0;
     private static final Handler OWN = new Handler(Looper.getMainLooper());
