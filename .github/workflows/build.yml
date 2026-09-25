@@ -2,8 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ main, master ]
-    # 自动更新 latest_version.txt 的提交不重复触发构建
+    branches: [ main ]
     paths-ignore: [ 'latest_version.txt' ]
     tags: [ 'v*' ]
   workflow_dispatch:
@@ -15,8 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -24,87 +22,35 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Set up Android SDK
-        # android-actions/setup-android@v3 已停止维护，与新 cmdline-tools 不兼容
-        # (sdkmanager 报 Failed to find package 'tools')，改为接受 license，
-        # 缺失的 platform/build-tools 由 Gradle 自动下载。
+      - name: Accept Android SDK licenses
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
           printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$ANDROID_HOME/licenses/android-sdk-license"
-          echo "Android SDK licenses accepted at $ANDROID_HOME"
 
-      - name: Decode signing keystore
-        continue-on-error: true
-        env:
-          DRS_KEYSTORE_B64: ${{ secrets.DRS_KEYSTORE_B64 }}
+      - name: Gradle wrapper
         run: |
-          if [ -z "$DRS_KEYSTORE_B64" ]; then
-            echo "No keystore secret, using debug signing"
-            exit 0
-          fi
-          mkdir -p keystore
-          echo "$DRS_KEYSTORE_B64" | base64 -d > keystore/ramstatusbar-release.keystore
-          echo "DRS_KEYSTORE_PATH=keystore/ramstatusbar-release.keystore" >> "$GITHUB_ENV"
-          echo "keystore decoded: $(ls -la keystore/ramstatusbar-release.keystore)"
-
-      - name: Grant execute permission for gradlew
-        run: |
-          if [ ! -f gradlew ]; then
-            gradle wrapper --gradle-version 8.9
-          fi
+          if [ ! -f gradlew ]; then gradle wrapper --gradle-version 8.9; fi
           chmod +x gradlew
 
-      - name: Build debug APK
+      - name: Build APK
         run: ./gradlew assembleDebug
 
-      - name: Verify APK signature
-        continue-on-error: true
+      - name: Verify signature
         run: |
           apksigner="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)/apksigner"
-          certs=$("$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk)
-          echo "$certs"
+          "$apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Update latest_version.txt (jsDelivr CDN 检测源)
-        continue-on-error: true
-        if: github.ref == 'refs/heads/main'
-        run: |
-          VER=$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle)
-          echo "当前版本: $VER"
-          if [ -f latest_version.txt ] && [ "$(cat latest_version.txt)" = "$VER" ]; then
-            echo "版本文件已是最新，无需更新"
-          else
-            echo "$VER" > latest_version.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add latest_version.txt
-            git commit -m "自动更新 latest_version.txt 为 $VER"
-            git push origin main
-            echo "已更新并推送 latest_version.txt"
-          fi
-
-      - name: Upload APK artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RamStatusBar-debug-apk
+          name: ScreenshotX-apk
           path: app/build/outputs/apk/debug/*.apk
 
-      # ========= 仅当打 tag（v*）时：自动发布 Release =========
-      - name: Package APK into ZIP (tag only)
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          cp app/build/outputs/apk/debug/app-debug.apk ./release-app-debug.apk
-          zip RamStatusBar-debug-apk.zip release-app-debug.apk
-          ls -la release-app-debug.apk RamStatusBar-debug-apk.zip
-
-      - name: Create GitHub Release (tag only)
+      - name: Release (tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          name: RamStatusBar ${{ github.ref_name }}
-          body_path: .github/RELEASE_BODY.md
-          files: |
-            release-app-debug.apk
-            RamStatusBar-debug-apk.zip
-          fail_on_unmatched_files: true
+          name: ScreenshotX ${{ github.ref_name }}
+          files: app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
