@@ -2,7 +2,6 @@ package io.github.gjr787878.screenshotx;
 
 import android.content.Context;
 import android.content.Intent;
-import android.view.KeyEvent;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -37,42 +36,34 @@ public class HookMain implements IXposedHookLoadPackage {
             }
         });
 
-        // 2) 拦截系统截屏组合键入口
+        // 2) 拦截系统截屏的「最终动作」handleScreenShot。
+        //    走到这里时组合键状态机已完整执行(系统已设 mPowerKeyHandled、取消短按锁屏)，
+        //    所以不会锁屏；我们只替换截屏内容，完全不碰电源键，正常锁屏不受影响。
         XC_MethodHook shotHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 long now = System.currentTimeMillis();
                 if (now - lastTrigger < 1500) { p.setResult(null); return; }
                 lastTrigger = now;
-                XposedBridge.log("ScreenshotX: screenshot chord intercepted");
-                // 尝试设置系统内部标志，告诉电源键处理这是截屏组合、不要锁屏
-                trySetFlag(p.thisObject, "mScreenshotChordConsumed");
-                trySetFlag(p.thisObject, "mPowerKeyConsumedByScreenshotChord");
-                trySetFlag(p.thisObject, "mScreenshotChordPowerKeyUpConsumed");
+                XposedBridge.log("ScreenshotX: handleScreenShot intercepted");
                 fire();
-                p.setResult(null);
+                p.setResult(null); // 阻止系统截屏
             }
         };
-        int n = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", shotHook).size();
-        XposedBridge.log("ScreenshotX: interceptScreenshotChord hooks=" + n);
+        int n = XposedBridge.hookAllMethods(pwm, "handleScreenShot", shotHook).size();
+        XposedBridge.log("ScreenshotX: handleScreenShot hooks=" + n);
 
-        // 3) 精准拦截「电源键短按锁屏」方法，只在截屏后 1.5s 内阻止；
-        //    不干预 interceptKeyBeforeQueueing，保证电源键正常清理与正常锁屏
-        XC_MethodHook shortPressHook = new XC_MethodHook() {
-            @Override protected void beforeHookedMethod(MethodHookParam p) {
-                if (System.currentTimeMillis() - lastTrigger < 1500) {
-                    XposedBridge.log("ScreenshotX: suppress power short-press sleep");
+        // Fallback：旧版系统没有 handleScreenShot，则拦截 interceptScreenshotChord
+        if (n == 0) {
+            XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastTrigger < 1500) { p.setResult(null); return; }
+                    lastTrigger = now;
+                    fire();
                     p.setResult(null);
                 }
-            }
-        };
-        int s1 = XposedBridge.hookAllMethods(pwm, "powerShortPress", shortPressHook).size();
-        int s2 = XposedBridge.hookAllMethods(pwm, "shortPressOnPower", shortPressHook).size();
-        XposedBridge.log("ScreenshotX: powerShortPress hooks=" + (s1+s2));
-    }
-
-    private static void trySetFlag(Object obj, String name) {
-        try { XposedHelpers.setBooleanField(obj, name, true); }
-        catch (Throwable ignored) {}
+            });
+        }
     }
 
     private void fire() {
