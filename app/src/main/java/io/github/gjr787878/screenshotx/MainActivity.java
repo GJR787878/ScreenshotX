@@ -108,7 +108,7 @@ public class MainActivity extends Activity {
             try {
                 Process p = Runtime.getRuntime().exec("su");
                 DataOutputStream os = new DataOutputStream(p.getOutputStream());
-                os.writeBytes("cat /data/local/tmp/screenshotx_diag.log\n");
+                os.writeBytes("cat /data/system/screenshotx_diag.log\n");
                 os.writeBytes("exit\n");
                 os.flush();
                 InputStream is = p.getInputStream();

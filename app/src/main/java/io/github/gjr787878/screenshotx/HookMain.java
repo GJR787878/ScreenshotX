@@ -21,7 +21,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class HookMain implements IXposedHookLoadPackage {
 
     private static final String TAG = "ScreenshotX";
-    private static final String LOG_FILE = "/data/local/tmp/screenshotx_diag.log";
+    private static final String LOG_FILE = "/data/system/screenshotx_diag.log";
     private static Context sysContext;
     private static long lastTrigger = 0;
     private static final Handler OWN = new Handler(Looper.getMainLooper());
@@ -37,7 +37,11 @@ public class HookMain implements IXposedHookLoadPackage {
         } catch (Throwable ignored) {}
     }
 
-    private static void clearLog() {
+    private static boolean logInited = false;
+
+    private static synchronized void initLog() {
+        if (logInited) return;
+        logInited = true;
         try {
             FileWriter fw = new FileWriter(new File(LOG_FILE), false);
             fw.write("=== ScreenshotX diag "
@@ -49,7 +53,7 @@ public class HookMain implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
-        clearLog();
+        initLog();
         log("handleLoadPackage pkg=" + lp.packageName
                 + " process=" + (lp.processName == null ? "null" : lp.processName));
         if (!"android".equals(lp.packageName)) {
