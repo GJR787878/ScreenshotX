@@ -55,28 +55,19 @@ public class HookMain implements IXposedHookLoadPackage {
         int n = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", shotHook).size();
         XposedBridge.log("ScreenshotX: interceptScreenshotChord hooks=" + n);
 
-        // 3) 始终 hook 按键分发：截屏后 1.5s 内吃掉电源键 UP，阻止锁屏
-        XC_MethodHook keyHook = new XC_MethodHook() {
+        // 3) 精准拦截「电源键短按锁屏」方法，只在截屏后 1.5s 内阻止；
+        //    不干预 interceptKeyBeforeQueueing，保证电源键正常清理与正常锁屏
+        XC_MethodHook shortPressHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
-                KeyEvent ev = (KeyEvent) p.args[0];
-                if (ev == null) return;
-                if (ev.getKeyCode() == KeyEvent.KEYCODE_POWER
-                        && ev.getAction() == KeyEvent.ACTION_UP
-                        && System.currentTimeMillis() - lastTrigger < 1500) {
-                    XposedBridge.log("ScreenshotX: consume power up after screenshot");
-                    p.setResult(0);
+                if (System.currentTimeMillis() - lastTrigger < 1500) {
+                    XposedBridge.log("ScreenshotX: suppress power short-press sleep");
+                    p.setResult(null);
                 }
             }
         };
-        try {
-            XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
-                    KeyEvent.class, int.class, keyHook);
-        } catch (Throwable t) {
-            try {
-                XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
-                        KeyEvent.class, int.class, int.class, keyHook);
-            } catch (Throwable ignored) {}
-        }
+        int s1 = XposedBridge.hookAllMethods(pwm, "powerShortPress", shortPressHook).size();
+        int s2 = XposedBridge.hookAllMethods(pwm, "shortPressOnPower", shortPressHook).size();
+        XposedBridge.log("ScreenshotX: powerShortPress hooks=" + (s1+s2));
     }
 
     private static void trySetFlag(Object obj, String name) {
