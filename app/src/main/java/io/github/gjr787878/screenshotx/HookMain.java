@@ -1,75 +1,91 @@
 package io.github.gjr787878.screenshotx;
 
+import android.content.Context;
+import android.content.Intent;
 import android.view.KeyEvent;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 public class HookMain implements IXposedHookLoadPackage {
 
-    private static final String TAG = "ScreenshotX";
-    private static boolean powerPressed = false;
+    private static boolean powerDown = false;
     private static long powerTime = 0;
+    private static long lastTrigger = 0;
 
     @Override
-    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) throws Throwable {
-        // PhoneWindowManager 在 system_server 进程，包名是 "android"
-        if (lp.packageName.equals("android")) {
-            hookPhoneWindowManager(lp);
-        }
-    }
+    public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
+        // 按键拦截在系统框架(android / system_server)进程
+        if (!"android".equals(lp.packageName)) return;
 
-    private void hookPhoneWindowManager(XC_LoadPackage.LoadPackageParam lp) {
+        Class<?> pwm;
         try {
-            Class<?> pwmClass = XposedHelpers.findClass(
+            pwm = XposedHelpers.findClass(
                     "com.android.server.policy.PhoneWindowManager", lp.classLoader);
-
-            XposedHelpers.findAndHookMethod(pwmClass, "interceptKeyBeforeQueueing",
-                    KeyEvent.class, int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override
-                        protected void beforeHookedMethod(MethodHookParam param) {
-                            KeyEvent event = (KeyEvent) param.args[0];
-                            if (event == null) return;
-
-                            int keyCode = event.getKeyCode();
-                            int action = event.getAction();
-
-                            if (keyCode == KeyEvent.KEYCODE_POWER) {
-                                if (action == KeyEvent.ACTION_DOWN) {
-                                    powerPressed = true;
-                                    powerTime = System.currentTimeMillis();
-                                } else if (action == KeyEvent.ACTION_UP) {
-                                    powerPressed = false;
-                                }
-                            }
-
-                            if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-                                    && action == KeyEvent.ACTION_DOWN
-                                    && powerPressed
-                                    && System.currentTimeMillis() - powerTime < 500) {
-                                triggerScreenshot();
-                                // 取消系统截屏
-                                param.setResult(0);
-                            }
-                        }
-                    });
-            android.util.Log.d(TAG, "PhoneWindowManager hooked");
         } catch (Throwable t) {
-            android.util.Log.e(TAG, "hook error", t);
+            XposedBridge.log("ScreenshotX: PhoneWindowManager not found");
+            return;
         }
-    }
 
-    private void triggerScreenshot() {
+        XC_MethodHook hook = new XC_MethodHook() {
+            @Override
+            protected void beforeHookedMethod(MethodHookParam param) {
+                KeyEvent ev = (KeyEvent) param.args[0];
+                if (ev == null) return;
+                int code = ev.getKeyCode();
+                int action = ev.getAction();
+
+                if (code == KeyEvent.KEYCODE_POWER) {
+                    if (action == KeyEvent.ACTION_DOWN) {
+                        powerDown = true;
+                        powerTime = System.currentTimeMillis();
+                    } else if (action == KeyEvent.ACTION_UP) {
+                        powerDown = false;
+                    }
+                }
+
+                if (code == KeyEvent.KEYCODE_VOLUME_DOWN
+                        && action == KeyEvent.ACTION_DOWN
+                        && powerDown
+                        && System.currentTimeMillis() - powerTime < 600) {
+                    long now = System.currentTimeMillis();
+                    if (now - lastTrigger < 1000) return;
+                    lastTrigger = now;
+
+                    try {
+                        Context ctx = (Context) XposedHelpers.getObjectField(
+                                param.thisObject, "mContext");
+                        Intent svc = new Intent();
+                        svc.setClassName("io.github.gjr787878.screenshotx",
+                                "io.github.gjr787878.screenshotx.ScreenshotService");
+                        svc.setAction(ScreenshotService.ACTION_SHOOT);
+                        ctx.startService(svc);
+                    } catch (Throwable t) {
+                        XposedBridge.log("ScreenshotX: startService failed: " + t);
+                    }
+                    // 取消系统截屏
+                    param.setResult(0);
+                }
+            }
+        };
+
+        // 新版签名 (KeyEvent, int)
         try {
-            Runtime.getRuntime().exec(new String[]{
-                    "su", "-c",
-                    "am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService -a io.github.gjr787878.screenshotx.SHOOT"
-            });
-        } catch (Exception e) {
-            android.util.Log.e(TAG, "trigger error", e);
+            XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
+                    KeyEvent.class, int.class, hook);
+            XposedBridge.log("ScreenshotX: hooked (2 args)");
+        } catch (Throwable t) {
+            // 旧版签名 (KeyEvent, int, int)
+            try {
+                XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
+                        KeyEvent.class, int.class, int.class, hook);
+                XposedBridge.log("ScreenshotX: hooked (3 args)");
+            } catch (Throwable t2) {
+                XposedBridge.log("ScreenshotX: hook failed: " + t2);
+            }
         }
     }
 }

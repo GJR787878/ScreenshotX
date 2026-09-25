@@ -3,6 +3,8 @@ package io.github.gjr787878.screenshotx;
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -18,94 +20,158 @@ import java.io.FileOutputStream;
 public class EditorActivity extends Activity {
 
     private DrawView drawView;
-    private Bitmap srcBmp;
+    private int selected = 0;
 
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         String path = getIntent().getStringExtra("path");
         if (path == null) { finish(); return; }
-        srcBmp = BitmapFactory.decodeFile(path);
-        if (srcBmp == null) { finish(); return; }
+        Bitmap src = BitmapFactory.decodeFile(path);
+        if (src == null) { finish(); return; }
 
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
 
-        // 绘图区域
+        // 绘图区
         drawView = new DrawView(this);
-        drawView.setBitmap(srcBmp);
-        FrameLayout.LayoutParams dp2 = new FrameLayout.LayoutParams(-1, -1);
-        dp2.topMargin = dp(60);
-        dp2.bottomMargin = dp(120);
-        root.addView(drawView, dp2);
+        drawView.setBitmap(src);
+        FrameLayout.LayoutParams dvp = new FrameLayout.LayoutParams(-1, -1);
+        dvp.topMargin = dp(64);
+        dvp.bottomMargin = dp(190);
+        root.addView(drawView, dvp);
 
-        // 顶部栏
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        topBar.setPadding(dp(12), dp(16), dp(12), dp(8));
-        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-1, dp(56));
+        // ===== 顶部栏 =====
+        LinearLayout top = new LinearLayout(this);
+        top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        top.setPadding(dp(16), dp(18), dp(16), dp(8));
+        FrameLayout.LayoutParams tp = new FrameLayout.LayoutParams(-1, dp(58));
         tp.gravity = Gravity.TOP;
-        root.addView(topBar, tp);
+        root.addView(top, tp);
 
-        addIcon(topBar, android.R.drawable.ic_menu_delete, v -> finish());
-        addIcon(topBar, android.R.drawable.ic_menu_revert, v -> drawView.undo());
-        addIcon(topBar, android.R.drawable.ic_menu_rotate, v -> drawView.redo());
-        View spacer = new View(this);
-        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
-        addIcon(topBar, android.R.drawable.ic_menu_share, v ->
-                Toast.makeText(this, "分享", Toast.LENGTH_SHORT).show());
-        addIcon(topBar, android.R.drawable.ic_menu_save, v -> save());
+        topIcon(top, R.drawable.ic_trash, v -> finish());
+        View gap1 = new View(this); top.addView(gap1, new LinearLayout.LayoutParams(0,1,1));
+        topIcon(top, R.drawable.ic_undo, v -> drawView.undo());
+        topIcon(top, R.drawable.ic_redo, v -> drawView.redo());
+        View gap2 = new View(this); top.addView(gap2, new LinearLayout.LayoutParams(0,1,1));
+        topIcon(top, R.drawable.ic_share, v -> Toast.makeText(this,"分享",Toast.LENGTH_SHORT).show());
+        topIcon(top, R.drawable.ic_check, v -> save());
 
-        // 底部栏
-        LinearLayout bottomBar = new LinearLayout(this);
-        bottomBar.setOrientation(LinearLayout.HORIZONTAL);
-        bottomBar.setGravity(Gravity.CENTER);
-        bottomBar.setPadding(dp(8), dp(12), dp(8), dp(20));
-        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(100));
+        // ===== 底部容器 =====
+        LinearLayout bottom = new LinearLayout(this);
+        bottom.setOrientation(LinearLayout.VERTICAL);
+        bottom.setPadding(dp(16), dp(8), dp(16), dp(18));
+        FrameLayout.LayoutParams bp = new FrameLayout.LayoutParams(-1, dp(180));
         bp.gravity = Gravity.BOTTOM;
-        root.addView(bottomBar, bp);
+        root.addView(bottom, bp);
 
-        addTab(bottomBar, "标记", true);
-        addTab(bottomBar, "文字", false);
-        addTab(bottomBar, "马赛克", false);
-        addTab(bottomBar, "识文", false);
-        addTab(bottomBar, "裁剪", false);
+        // 画笔条
+        LinearLayout pens = new LinearLayout(this);
+        pens.setOrientation(LinearLayout.HORIZONTAL);
+        pens.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        pens.setPadding(0, dp(6), 0, dp(10));
+        LinearLayout.LayoutParams pensLp = new LinearLayout.LayoutParams(-1, dp(70));
+        bottom.addView(pens, pensLp);
+
+        addPen(pens, dp(7),  dp(46), 0xFFD04030);
+        addPen(pens, dp(13), dp(52), 0xFF4A4A50);
+        addPen(pens, dp(8),  dp(48), 0xFFE8C88A);
+        addPen(pens, dp(9),  dp(50), 0xFF3A6EA8);
+        addPen(pens, dp(14), dp(44), 0xFFB8B8BC);
+        View pgap = new View(this); pens.addView(pgap, new LinearLayout.LayoutParams(0,1,1));
+        ColorWheelView wheel = new ColorWheelView(this);
+        LinearLayout.LayoutParams wlp = new LinearLayout.LayoutParams(dp(40), dp(40));
+        pens.addView(wheel, wlp);
+
+        // 功能行
+        LinearLayout funcs = new LinearLayout(this);
+        funcs.setOrientation(LinearLayout.HORIZONTAL);
+        funcs.setGravity(Gravity.CENTER);
+        bottom.addView(funcs, new LinearLayout.LayoutParams(-1, dp(90)));
+
+        addFunc(funcs, R.drawable.ic_pen,    "标记",   0);
+        addFunc(funcs, R.drawable.ic_text,   "文字",   1);
+        addFunc(funcs, R.drawable.ic_mosaic, "马赛克", 2);
+        addFunc(funcs, R.drawable.ic_scan,   "识文",   3);
+        addFunc(funcs, R.drawable.ic_crop,   "形状裁剪", 4);
+        addFunc(funcs, R.drawable.ic_pen,    "高级编辑", 5);
 
         setContentView(root);
     }
 
-    private void addIcon(LinearLayout bar, int icon, View.OnClickListener l) {
+    private void topIcon(LinearLayout bar, int icon, View.OnClickListener l) {
         ImageView iv = new ImageView(this);
         iv.setImageResource(icon);
-        iv.setColorFilter(0xFFFFFFFF);
-        iv.setPadding(dp(12), dp(12), dp(12), dp(12));
+        iv.setPadding(dp(11), dp(11), dp(11), dp(11));
         iv.setOnClickListener(l);
-        bar.addView(iv, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        bar.addView(iv, new LinearLayout.LayoutParams(dp(46), dp(46)));
     }
 
-    private void addTab(LinearLayout bar, String text, boolean selected) {
+    private void addPen(LinearLayout bar, int w, int h, int color) {
+        View pen = new View(this);
+        GradientDrawable d = new GradientDrawable();
+        d.setShape(GradientDrawable.RECTANGLE);
+        d.setCornerRadius(w/2f);
+        d.setColor(color);
+        pen.setBackground(d);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
+        lp.setMargins(dp(7), 0, dp(7), 0);
+        bar.addView(pen, lp);
+    }
+
+    private void addFunc(LinearLayout bar, int icon, String label, int index) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+
+        ImageView circle = new ImageView(this);
+        circle.setImageResource(icon);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        boolean sel = index == selected;
+        if (sel) {
+            bg.setColor(0xFFFFFFFF);
+            circle.setColorFilter(0xFF000000);
+        } else {
+            bg.setColor(0x24FFFFFF);
+            circle.setColorFilter(0xFFFFFFFF);
+        }
+        circle.setBackground(bg);
+        circle.setPadding(dp(12), dp(12), dp(12), dp(12));
+        item.addView(circle, new LinearLayout.LayoutParams(dp(50), dp(50)));
+
         TextView tv = new TextView(this);
-        tv.setText(text);
-        tv.setTextColor(selected ? 0xFFFFFFFF : 0x99FFFFFF);
-        tv.setTextSize(14);
+        tv.setText(label);
+        tv.setTextColor(sel ? 0xFFFFFFFF : 0xCCFFFFFF);
+        tv.setTextSize(12);
         tv.setGravity(Gravity.CENTER);
-        tv.setPadding(dp(12), dp(10), dp(12), dp(10));
+        tv.setPadding(0, dp(5), 0, 0);
+        item.addView(tv);
+
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, -2, 1);
-        bar.addView(tv, lp);
+        bar.addView(item, lp);
+
+        item.setOnClickListener(v -> {
+            if (index == 0) return; // 标记默认
+            Toast.makeText(this, label + " 开发中", Toast.LENGTH_SHORT).show();
+        });
     }
 
     private void save() {
         try {
             Bitmap result = drawView.getResultBitmap();
-            File f = new File(getExternalCacheDir(), "ScreenshotX_" + System.currentTimeMillis() + ".png");
+            File dir = android.os.Environment.getExternalStoragePublicDirectory(
+                    android.os.Environment.DIRECTORY_PICTURES + "/Screenshots");
+            dir.mkdirs();
+            File f = new File(dir, "ScreenshotX_" + System.currentTimeMillis() + ".png");
             FileOutputStream fos = new FileOutputStream(f);
             result.compress(Bitmap.CompressFormat.PNG, 100, fos);
             fos.close();
-            Toast.makeText(this, "已保存", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "已保存到 Pictures/Screenshots", Toast.LENGTH_LONG).show();
             finish();
         } catch (Exception e) {
-            Toast.makeText(this, "保存失败", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "保存失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 

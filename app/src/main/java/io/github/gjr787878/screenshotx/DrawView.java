@@ -28,9 +28,9 @@ public class DrawView extends View {
     public DrawView(Context c) {
         super(c);
         paint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        paint.setColor(Color.WHITE);
+        paint.setColor(Color.RED);
         paint.setStyle(Paint.Style.STROKE);
-        paint.setStrokeWidth(8);
+        paint.setStrokeWidth(7);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setStrokeJoin(Paint.Join.ROUND);
     }
