@@ -1,6 +1,5 @@
 package io.github.gjr787878.screenshotx;
 
-import android.util.Log;
 import android.view.KeyEvent;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -16,7 +15,7 @@ public class HookMain implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) throws Throwable {
-        // PhoneWindowManager 在 system_server 进程，包名是 android
+        // PhoneWindowManager 在 system_server 进程，包名是 "android"
         if (lp.packageName.equals("android")) {
             hookPhoneWindowManager(lp);
         }
@@ -42,27 +41,24 @@ public class HookMain implements IXposedHookLoadPackage {
                                 if (action == KeyEvent.ACTION_DOWN) {
                                     powerPressed = true;
                                     powerTime = System.currentTimeMillis();
-                                    Log.d(TAG, "Power DOWN");
                                 } else if (action == KeyEvent.ACTION_UP) {
                                     powerPressed = false;
                                 }
                             }
 
-                            // 音量下 + 电源键在 500ms 内
                             if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
                                     && action == KeyEvent.ACTION_DOWN
                                     && powerPressed
                                     && System.currentTimeMillis() - powerTime < 500) {
-                                Log.d(TAG, "Power+VolDown detected!");
                                 triggerScreenshot();
-                                // 取消后续处理，阻止系统截屏
+                                // 取消系统截屏
                                 param.setResult(0);
                             }
                         }
                     });
-            Log.d(TAG, "PhoneWindowManager hooked OK");
+            android.util.Log.d(TAG, "PhoneWindowManager hooked");
         } catch (Throwable t) {
-            Log.e(TAG, "PhoneWindowManager hook error", t);
+            android.util.Log.e(TAG, "hook error", t);
         }
     }
 
@@ -73,7 +69,7 @@ public class HookMain implements IXposedHookLoadPackage {
                     "am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService -a io.github.gjr787878.screenshotx.SHOOT"
             });
         } catch (Exception e) {
-            Log.e(TAG, "triggerScreenshot error", e);
+            android.util.Log.e(TAG, "trigger error", e);
         }
     }
 }
