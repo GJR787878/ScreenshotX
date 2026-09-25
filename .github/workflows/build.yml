@@ -38,6 +38,10 @@ jobs:
         env:
           DRS_KEYSTORE_B64: ${{ secrets.DRS_KEYSTORE_B64 }}
         run: |
+          if [ -z "$DRS_KEYSTORE_B64" ]; then
+            echo "No keystore secret, using debug signing"
+            exit 0
+          fi
           mkdir -p keystore
           echo "$DRS_KEYSTORE_B64" | base64 -d > keystore/ramstatusbar-release.keystore
           echo "DRS_KEYSTORE_PATH=keystore/ramstatusbar-release.keystore" >> "$GITHUB_ENV"
