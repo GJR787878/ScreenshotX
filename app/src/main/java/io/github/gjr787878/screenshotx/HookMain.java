@@ -28,7 +28,7 @@ public class HookMain implements IXposedHookLoadPackage {
             return;
         }
 
-        // 1) 从 init() 抓取系统 Context
+        // 1) 从 init() 抓系统 Context
         XposedBridge.hookAllMethods(pwm, "init", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam p) {
                 if (p.args.length > 0 && p.args[0] instanceof Context) {
@@ -37,57 +37,51 @@ public class HookMain implements IXposedHookLoadPackage {
             }
         });
 
-        // 2) 直接拦截系统截屏组合键的入口（最可靠）
+        // 2) 拦截系统截屏组合键入口
         XC_MethodHook shotHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 long now = System.currentTimeMillis();
-                if (now - lastTrigger < 1200) { p.setResult(null); return; }
+                if (now - lastTrigger < 1500) { p.setResult(null); return; }
                 lastTrigger = now;
-                XposedBridge.log("ScreenshotX: system screenshot chord intercepted");
+                XposedBridge.log("ScreenshotX: screenshot chord intercepted");
+                // 尝试设置系统内部标志，告诉电源键处理这是截屏组合、不要锁屏
+                trySetFlag(p.thisObject, "mScreenshotChordConsumed");
+                trySetFlag(p.thisObject, "mPowerKeyConsumedByScreenshotChord");
+                trySetFlag(p.thisObject, "mScreenshotChordPowerKeyUpConsumed");
                 fire();
-                p.setResult(null); // 阻止系统截屏
+                p.setResult(null);
             }
         };
-        int n1 = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", shotHook).size();
-        XposedBridge.log("ScreenshotX: interceptScreenshotChord hooks=" + n1);
+        int n = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord", shotHook).size();
+        XposedBridge.log("ScreenshotX: interceptScreenshotChord hooks=" + n);
 
-        // 3) Fallback：自己检测组合键时序
-        if (n1 == 0) {
-            hookKeyFallback(pwm);
-        }
-    }
-
-    private void hookKeyFallback(Class<?> pwm) {
-        final boolean[] power = {false};
-        final long[] ptime = {0};
-        XC_MethodHook h = new XC_MethodHook() {
+        // 3) 始终 hook 按键分发：截屏后 1.5s 内吃掉电源键 UP，阻止锁屏
+        XC_MethodHook keyHook = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
                 KeyEvent ev = (KeyEvent) p.args[0];
                 if (ev == null) return;
-                if (ev.getKeyCode() == KeyEvent.KEYCODE_POWER) {
-                    power[0] = ev.getAction() == KeyEvent.ACTION_DOWN;
-                    if (power[0]) ptime[0] = System.currentTimeMillis();
-                }
-                if (ev.getKeyCode() == KeyEvent.KEYCODE_VOLUME_DOWN
-                        && ev.getAction() == KeyEvent.ACTION_DOWN
-                        && power[0] && System.currentTimeMillis()-ptime[0] < 600) {
-                    long now = System.currentTimeMillis();
-                    if (now-lastTrigger < 1200) return;
-                    lastTrigger = now;
-                    fire();
+                if (ev.getKeyCode() == KeyEvent.KEYCODE_POWER
+                        && ev.getAction() == KeyEvent.ACTION_UP
+                        && System.currentTimeMillis() - lastTrigger < 1500) {
+                    XposedBridge.log("ScreenshotX: consume power up after screenshot");
                     p.setResult(0);
                 }
             }
         };
         try {
             XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
-                    KeyEvent.class, int.class, h);
+                    KeyEvent.class, int.class, keyHook);
         } catch (Throwable t) {
             try {
                 XposedHelpers.findAndHookMethod(pwm, "interceptKeyBeforeQueueing",
-                        KeyEvent.class, int.class, int.class, h);
+                        KeyEvent.class, int.class, int.class, keyHook);
             } catch (Throwable ignored) {}
         }
+    }
+
+    private static void trySetFlag(Object obj, String name) {
+        try { XposedHelpers.setBooleanField(obj, name, true); }
+        catch (Throwable ignored) {}
     }
 
     private void fire() {

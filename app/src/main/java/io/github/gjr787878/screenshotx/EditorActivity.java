@@ -8,7 +8,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
-import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -35,25 +34,20 @@ public class EditorActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
         String path = getIntent().getStringExtra("path");
-        if (path==null){finish();return;}
+        if(path==null){finish();return;}
         Bitmap src=BitmapFactory.decodeFile(path);
         if(src==null){finish();return;}
 
-        FrameLayout root=new FrameLayout(this);
+        // 根：垂直布局
+        LinearLayout root=new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xFF000000);
-
-        drawView=new DrawView(this);
-        drawView.setBitmap(src);
-        drawView.setColor(curColor);
-        FrameLayout.LayoutParams dvp=new FrameLayout.LayoutParams(-1,-1);
-        dvp.topMargin=dp(64); dvp.bottomMargin=dp(200);
-        root.addView(drawView,dvp);
 
         // 顶部栏
         LinearLayout top=new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setPadding(dp(16),dp(18),dp(16),dp(8));
-        root.addView(top,frameTop(dp(58)));
+        top.setPadding(dp(16),dp(14),dp(16),dp(6));
+        root.addView(top,new LinearLayout.LayoutParams(-1,dp(58)));
         topIcon(top,R.drawable.ic_trash,v->finish());
         top.addView(stretch());
         topIcon(top,R.drawable.ic_undo,v->drawView.undo());
@@ -62,20 +56,26 @@ public class EditorActivity extends Activity {
         topIcon(top,R.drawable.ic_share,v->Toast.makeText(this,"分享",Toast.LENGTH_SHORT).show());
         topIcon(top,R.drawable.ic_check,v->save());
 
-        // 底部
+        // 中间绘图区(占剩余)
+        drawView=new DrawView(this);
+        drawView.setBitmap(src);
+        drawView.setColor(curColor);
+        root.addView(drawView,new LinearLayout.LayoutParams(-1,0,1));
+
+        // 底部工具栏
         LinearLayout bottom=new LinearLayout(this);
         bottom.setOrientation(LinearLayout.VERTICAL);
-        bottom.setPadding(dp(16),dp(6),dp(16),dp(16));
-        root.addView(bottom,frameBottom(dp(192)));
+        bottom.setPadding(dp(16),dp(4),dp(16),dp(14));
+        root.addView(bottom,new LinearLayout.LayoutParams(-1,-2));
 
-        // 笔条(深色圆角横条)
+        // 笔条(深色圆角横条，wrap高度给tooltip留空间)
         LinearLayout penBar=new LinearLayout(this);
         penBar.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
-        penBar.setPadding(dp(8),dp(8),dp(8),dp(8));
+        penBar.setPadding(dp(8),dp(6),dp(8),dp(8));
         GradientDrawable barBg=new GradientDrawable();
         barBg.setCornerRadius(dp(18)); barBg.setColor(0x3326262A);
         penBar.setBackground(barBg);
-        LinearLayout.LayoutParams barLp=new LinearLayout.LayoutParams(-1,dp(78));
+        LinearLayout.LayoutParams barLp=new LinearLayout.LayoutParams(-1,-2);
         barLp.setMargins(0,0,0,dp(12));
         bottom.addView(penBar,barLp);
 
@@ -92,35 +92,36 @@ public class EditorActivity extends Activity {
             tip.setBackground(tb);
             tip.setPadding(dp(10),dp(4),dp(10),dp(4));
             tip.setVisibility(i==0?View.VISIBLE:View.GONE);
+            tip.setTranslationY(dp(-2));
             penTips[i]=tip;
-            item.addView(tip);
+            LinearLayout.LayoutParams tipLp=new LinearLayout.LayoutParams(-2,-2);
+            tipLp.setMargins(0,0,0,dp(4));
+            item.addView(tip,tipLp);
 
             ImageView pen=new ImageView(this);
             pen.setImageResource(PEN_RES[i]);
-            pen.setPadding(dp(4),dp(2),dp(4),dp(2));
             penIcons[i]=pen;
             final int idx=i;
             pen.setOnClickListener(v->selectPen(idx));
-            LinearLayout.LayoutParams ilp=new LinearLayout.LayoutParams(dp(34),dp(52));
-            item.addView(pen,ilp);
+            item.addView(pen,new LinearLayout.LayoutParams(dp(32),dp(50)));
 
-            LinearLayout.LayoutParams itemLp=new LinearLayout.LayoutParams(0,-2,1);
-            penBar.addView(item,itemLp);
+            penBar.addView(item,new LinearLayout.LayoutParams(0,-2,1));
         }
         selectPen(0);
 
-        // 右侧颜色轮
-        FrameLayout wheelWrap=new FrameLayout(this);
+        // 颜色轮
         wheel=new ColorWheelView(this);
         wheel.setCenterColor(curColor);
         wheel.setOnClickListener(v->openPicker());
-        wheelWrap.addView(wheel,new FrameLayout.LayoutParams(dp(42),dp(42)));
-        penBar.addView(wheelWrap,new LinearLayout.LayoutParams(dp(50),dp(64)));
+        LinearLayout wheelWrap=new LinearLayout(this);
+        wheelWrap.setGravity(Gravity.CENTER);
+        wheelWrap.addView(wheel,new LinearLayout.LayoutParams(dp(40),dp(40)));
+        penBar.addView(wheelWrap,new LinearLayout.LayoutParams(dp(50),dp(60)));
 
         // 功能行
         LinearLayout funcs=new LinearLayout(this);
         funcs.setGravity(Gravity.CENTER);
-        bottom.addView(funcs,new LinearLayout.LayoutParams(-1,dp(92)));
+        bottom.addView(funcs,new LinearLayout.LayoutParams(-1,dp(88)));
         addFunc(funcs,R.drawable.ic_pen,"标记",0);
         addFunc(funcs,R.drawable.ic_text,"文字",1);
         addFunc(funcs,R.drawable.ic_mosaic,"马赛克",2);
@@ -142,10 +143,8 @@ public class EditorActivity extends Activity {
     }
 
     private void openPicker(){
-        ColorPickerDialog d=new ColorPickerDialog(this, curColor, c->{
-            curColor=c;
-            wheel.setCenterColor(c);
-            drawView.setColor(c);
+        ColorPickerDialog d=new ColorPickerDialog(this,curColor,c->{
+            curColor=c; wheel.setCenterColor(c); drawView.setColor(c);
         });
         d.show();
     }
@@ -163,11 +162,11 @@ public class EditorActivity extends Activity {
         else{bg.setColor(0x24FFFFFF);circle.setColorFilter(0xFFFFFFFF);}
         circle.setBackground(bg);
         circle.setPadding(dp(12),dp(12),dp(12),dp(12));
-        item.addView(circle,new LinearLayout.LayoutParams(dp(50),dp(50)));
+        item.addView(circle,new LinearLayout.LayoutParams(dp(48),dp(48)));
         TextView tv=new TextView(this);
         tv.setText(label); tv.setTextColor(sel?0xFFFFFFFF:0xCCFFFFFF);
         tv.setTextSize(12); tv.setGravity(Gravity.CENTER);
-        tv.setPadding(0,dp(5),0,0);
+        tv.setPadding(0,dp(4),0,0);
         item.addView(tv);
         bar.addView(item,new LinearLayout.LayoutParams(0,-2,1));
         item.setOnClickListener(v->{
@@ -197,8 +196,6 @@ public class EditorActivity extends Activity {
         }catch(Exception e){Toast.makeText(this,"保存失败: "+e.getMessage(),Toast.LENGTH_SHORT).show();}
     }
 
-    private FrameLayout.LayoutParams frameTop(int h){FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(-1,h);p.gravity=Gravity.TOP;return p;}
-    private FrameLayout.LayoutParams frameBottom(int h){FrameLayout.LayoutParams p=new FrameLayout.LayoutParams(-1,h);p.gravity=Gravity.BOTTOM;return p;}
     private View stretch(){View v=new View(this);v.setLayoutParams(new LinearLayout.LayoutParams(0,1,1));return v;}
     private int dp(float v){return (int)(v*getResources().getDisplayMetrics().density);}
 }
