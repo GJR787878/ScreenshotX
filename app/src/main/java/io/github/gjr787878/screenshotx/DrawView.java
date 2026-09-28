@@ -18,8 +18,16 @@ public class DrawView extends View {
 
     public static final int BALL=0, MARKER=1, PENCIL=2, FOUNTAIN=3, ERASER=4;
 
+    /** 荧光笔统一不透明度 40% = 0.4*255 ≈ 102 */
+    private static final int MARKER_ALPHA = 102;
+
     private Bitmap base, overlay;
     private Canvas overlayCanvas;
+    // 荧光笔独立图层：笔画以不透明绘制，落笔时整体按 MARKER_ALPHA 合成，保证统一透明无渐变
+    private Bitmap markerLayer;
+    private Canvas markerCanvas;
+    private final Paint markerPaint = new Paint(Paint.ANTI_ALIAS_FLAG|Paint.DITHER_FLAG);
+    private final Paint markerCommitPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG|Paint.DITHER_FLAG);
     private final Path path = new Path();
     private float curX, curY;
@@ -43,12 +51,18 @@ public class DrawView extends View {
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setStrokeCap(Paint.Cap.ROUND);
+        markerPaint.setStyle(Paint.Style.STROKE);
+        markerPaint.setStrokeJoin(Paint.Join.ROUND);
+        markerPaint.setStrokeCap(Paint.Cap.ROUND);
+        markerCommitPaint.setAlpha(MARKER_ALPHA);
     }
 
     public void setBitmap(Bitmap b) {
         base = b.copy(Bitmap.Config.ARGB_8888, true);
         overlay = Bitmap.createBitmap(base.getWidth(), base.getHeight(), Bitmap.Config.ARGB_8888);
         overlayCanvas = new Canvas(overlay);
+        markerLayer = Bitmap.createBitmap(base.getWidth(), base.getHeight(), Bitmap.Config.ARGB_8888);
+        markerCanvas = new Canvas(markerLayer);
         requestLayout();
         invalidate();
     }
@@ -72,13 +86,18 @@ public class DrawView extends View {
 
     private void applyStyle(){
         paint.setStrokeWidth(widthFor(tool)*widthScale);
+        markerPaint.setStrokeWidth(widthFor(MARKER)*widthScale);
         if(tool==ERASER){
             paint.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
             paint.setAlpha(255);
         }else{
             paint.setXfermode(null);
             paint.setColor(color);
-            paint.setAlpha(tool==MARKER?40:255);
+            paint.setAlpha(255);
+            // 荧光笔在独立图层以不透明绘制，颜色统一，合成时再统一压到 40%
+            markerPaint.setXfermode(null);
+            markerPaint.setColor(color);
+            markerPaint.setAlpha(255);
         }
     }
 
@@ -96,6 +115,9 @@ public class DrawView extends View {
         canvas.scale(scale, scale);
         canvas.drawBitmap(base, 0, 0, null);
         canvas.drawBitmap(overlay, 0, 0, null);
+        // 正在绘制的荧光笔实时预览，统一 40% 透明
+        if(tool==MARKER && markerLayer!=null)
+            canvas.drawBitmap(markerLayer, 0, 0, markerCommitPaint);
         canvas.restore();
     }
 
@@ -118,15 +140,28 @@ public class DrawView extends View {
                 pushUndo(); applyStyle();
                 path.reset(); path.moveTo(x,y);
                 curX=x; curY=y;
-                overlayCanvas.drawPoint(x,y,paint);
+                if(tool==MARKER){
+                    markerLayer.eraseColor(Color.TRANSPARENT);
+                    markerCanvas.drawPoint(x,y,markerPaint);
+                }else{
+                    overlayCanvas.drawPoint(x,y,paint);
+                }
                 break;
             case MotionEvent.ACTION_MOVE:
                 path.quadTo(curX,curY,(x+curX)/2,(y+curY)/2);
-                overlayCanvas.drawPath(path,paint);
+                if(tool==MARKER) markerCanvas.drawPath(path,markerPaint);
+                else overlayCanvas.drawPath(path,paint);
                 curX=x; curY=y;
                 break;
             case MotionEvent.ACTION_UP:
-                overlayCanvas.drawPath(path,paint);
+                if(tool==MARKER){
+                    markerCanvas.drawPath(path,markerPaint);
+                    // 整笔统一按 40% 合成到 overlay，随后清空临时图层
+                    overlayCanvas.drawBitmap(markerLayer,0,0,markerCommitPaint);
+                    markerLayer.eraseColor(Color.TRANSPARENT);
+                }else{
+                    overlayCanvas.drawPath(path,paint);
+                }
                 path.reset();
                 break;
             default: return false;
@@ -161,7 +196,10 @@ public class DrawView extends View {
 
     public Bitmap getResultBitmap(){
         Bitmap out=base.copy(Bitmap.Config.ARGB_8888,true);
-        new Canvas(out).drawBitmap(overlay,0,0,null);
+        Canvas c=new Canvas(out);
+        c.drawBitmap(overlay,0,0,null);
+        // 兜底：保存时若有未落笔的荧光笔，也按统一 40% 合成
+        if(markerLayer!=null) c.drawBitmap(markerLayer,0,0,markerCommitPaint);
         return out;
     }
 }
