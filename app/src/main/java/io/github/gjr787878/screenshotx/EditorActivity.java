@@ -13,8 +13,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.File;
-import java.io.FileOutputStream;
+import android.content.ContentValues;
+import android.net.Uri;
+import android.provider.MediaStore;
+
+import java.io.OutputStream;
 
 public class EditorActivity extends Activity {
 
@@ -209,12 +212,21 @@ public class EditorActivity extends Activity {
     private void save(){
         try{
             Bitmap result=drawView.getResultBitmap();
-            File dir=android.os.Environment.getExternalStoragePublicDirectory(
-                android.os.Environment.DIRECTORY_PICTURES+"/Screenshots");
-            dir.mkdirs();
-            File f=new File(dir,"ScreenshotX_"+System.currentTimeMillis()+".png");
-            FileOutputStream fos=new FileOutputStream(f);
-            result.compress(Bitmap.CompressFormat.PNG,100,fos); fos.close();
+            String name="ScreenshotX_"+System.currentTimeMillis()+".png";
+            ContentValues values=new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME,name);
+            values.put(MediaStore.Images.Media.MIME_TYPE,"image/png");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,"Pictures/Screenshots");
+            values.put(MediaStore.Images.Media.IS_PENDING,1);
+            Uri uri=getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,values);
+            if(uri==null) throw new RuntimeException("MediaStore insert failed");
+            try(OutputStream os=getContentResolver().openOutputStream(uri)){
+                if(os==null) throw new RuntimeException("openOutputStream null");
+                result.compress(Bitmap.CompressFormat.PNG,100,os);
+            }
+            values.clear();
+            values.put(MediaStore.Images.Media.IS_PENDING,0);
+            getContentResolver().update(uri,values,null,null);
             Toast.makeText(this,"已保存到 Pictures/Screenshots",Toast.LENGTH_LONG).show();
             finish();
         }catch(Exception e){Toast.makeText(this,"保存失败: "+e.getMessage(),Toast.LENGTH_SHORT).show();}

@@ -117,7 +117,7 @@ public class HookLogic {
                 p.setResult(null); // 取消系统截屏
                 log("intercepted " + p.method.getDeclaringClass().getSimpleName()
                         + "." + p.method.getName() + " fire=" + fire);
-                if (fire) OWN.postDelayed(HookLogic::fire, 400);
+                if (fire) OWN.postDelayed(HookLogic::fire, 120);
             }
         };
         Set<?> a = XposedBridge.hookAllMethods(cls, "takeScreenshot", replace);
