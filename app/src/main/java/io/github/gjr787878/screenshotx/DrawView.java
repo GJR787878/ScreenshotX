@@ -42,6 +42,8 @@ public class DrawView extends View {
     // 双指缩放/平移（标记与马赛克通用）
     private final ZoomController zoomCtl;
     private boolean gestureActive=false;
+    // 是否已有标注（画笔/马赛克落到 overlay）；用于进入裁剪时跳过整屏复制
+    private boolean edited=false;
 
     // ===== 马赛克状态 =====
     private boolean mosaicMode = false;
@@ -115,6 +117,7 @@ public class DrawView extends View {
         mosBrush = bw*0.045f;
         undoStack.clear();
         redoStack.clear();
+        edited=false;
         zoomCtl.reset();
         if(getWidth()>0 && getHeight()>0)
             zoomCtl.setSize(getWidth(),getHeight(),base.getWidth(),base.getHeight());
@@ -221,6 +224,7 @@ public class DrawView extends View {
         switch(am){
             case MotionEvent.ACTION_DOWN:
                 pushUndo(); applyStyle();
+                edited=true;
                 path.reset(); path.moveTo(x,y);
                 curX=x; curY=y;
                 gestureActive=true;
@@ -421,6 +425,7 @@ public class DrawView extends View {
         p.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
         c.drawBitmap(mask,0,0,p);
         overlayCanvas.drawBitmap(s,dx,dy,null);
+        edited=true;
     }
 
     private void pushUndo(){
@@ -446,6 +451,9 @@ public class DrawView extends View {
         new Canvas(overlay).drawBitmap(next,0,0,null);
         invalidate();
     }
+
+    public Bitmap getBase(){return base;}
+    public boolean isEdited(){return edited;}
 
     public Bitmap getResultBitmap(){
         Bitmap out=base.copy(Bitmap.Config.ARGB_8888,true);

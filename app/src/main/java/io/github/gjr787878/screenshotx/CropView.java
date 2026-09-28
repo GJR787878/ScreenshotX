@@ -64,11 +64,11 @@ public class CropView extends View {
     }
 
     private void initDefault(){
+        // 默认裁剪框直接贴合整张已适配图片：进入即完整显示，状态栏/底部条不被压入暗区
         float il=zc.left(), it=zc.top();
         float ir=il+img.getWidth()*zc.dispScale();
         float ib=it+img.getHeight()*zc.dispScale();
-        float ix=(ir-il)*0.08f, iy=(ib-it)*0.08f;
-        crop.set(il+ix,it+iy,ir-ix,ib-iy);
+        crop.set(il,it,ir,ib);
     }
 
     public void setRatio(float r){

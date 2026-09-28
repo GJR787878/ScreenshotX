@@ -310,11 +310,20 @@ public class EditorActivity extends Activity {
         cropPanel.setVisibility(m==2?View.VISIBLE:View.GONE);
 
         if(m==2){
-            Bitmap flat=drawView.getResultBitmap();
-            cropView.setImage(flat);
             cropView.setVisibility(View.VISIBLE);
             drawView.setVisibility(View.GONE);
             for(int i=0;i<6;i++) styleChip(ratioChips[i],i==0);
+            if(!drawView.isEdited()){
+                // 无标注：直接复用原图，避免主线程整屏 copy，进入裁剪更快
+                cropView.setImage(drawView.getBase());
+            }else{
+                // 有标注：先用原图占位（裁剪框按已知尺寸初始化），后台合成标注后再替换
+                cropView.setImage(drawView.getBase());
+                new Thread(()->{
+                    Bitmap flat=drawView.getResultBitmap();
+                    runOnUiThread(()->cropView.setImage(flat));
+                }).start();
+            }
         }else{
             cropView.setVisibility(View.GONE);
             drawView.setVisibility(View.VISIBLE);
