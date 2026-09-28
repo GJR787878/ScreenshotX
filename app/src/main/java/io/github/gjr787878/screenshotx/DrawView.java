@@ -2,6 +2,7 @@ package io.github.gjr787878.screenshotx;
 
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.DashPathEffect;
@@ -13,6 +14,7 @@ import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -71,8 +73,10 @@ public class DrawView extends View {
     }
     public float getWidthScale(){return widthScale;}
 
-    private final List<Bitmap> undoStack = new ArrayList<>();
-    private final List<Bitmap> redoStack = new ArrayList<>();
+    // 撤销/重做栈：保存 PNG 压缩字节而非全屏位图，透明区域压缩率极高，
+    // 避免长时间编辑累积数十张全屏位图导致 OOM 崩溃。
+    private final List<byte[]> undoStack = new ArrayList<>();
+    private final List<byte[]> redoStack = new ArrayList<>();
 
     public DrawView(Context c) {
         super(c);
@@ -428,27 +432,36 @@ public class DrawView extends View {
         edited=true;
     }
 
+    private byte[] encodePng(Bitmap b){
+        ByteArrayOutputStream bos=new ByteArrayOutputStream();
+        b.compress(Bitmap.CompressFormat.PNG,100,bos);
+        return bos.toByteArray();
+    }
+    private Bitmap decodePng(byte[] d){
+        return BitmapFactory.decodeByteArray(d,0,d.length);
+    }
+
     private void pushUndo(){
         redoStack.clear();
-        undoStack.add(overlay.copy(Bitmap.Config.ARGB_8888,false));
-        if(undoStack.size()>25) undoStack.remove(0);
+        undoStack.add(encodePng(overlay));
+        if(undoStack.size()>20) undoStack.remove(0);
     }
 
     public void undo(){
         if(undoStack.isEmpty()||overlay==null) return;
-        redoStack.add(overlay.copy(Bitmap.Config.ARGB_8888,false));
-        Bitmap prev=undoStack.remove(undoStack.size()-1);
+        redoStack.add(encodePng(overlay));
+        byte[] prev=undoStack.remove(undoStack.size()-1);
         overlay.eraseColor(Color.TRANSPARENT);
-        new Canvas(overlay).drawBitmap(prev,0,0,null);
+        new Canvas(overlay).drawBitmap(decodePng(prev),0,0,null);
         invalidate();
     }
 
     public void redo(){
         if(redoStack.isEmpty()||overlay==null) return;
-        undoStack.add(overlay.copy(Bitmap.Config.ARGB_8888,false));
-        Bitmap next=redoStack.remove(redoStack.size()-1);
+        undoStack.add(encodePng(overlay));
+        byte[] next=redoStack.remove(redoStack.size()-1);
         overlay.eraseColor(Color.TRANSPARENT);
-        new Canvas(overlay).drawBitmap(next,0,0,null);
+        new Canvas(overlay).drawBitmap(decodePng(next),0,0,null);
         invalidate();
     }
 

@@ -8,8 +8,10 @@ import java.io.DataOutputStream;
 import java.io.InputStream;
 
 /**
- * 截屏服务：常驻进程 + 持久 Root shell，避免每次触发都冷启动 su。
- * 由 system_server 的 hook 或开机接收器启动。
+ * 截屏服务：正常流程下抓拍由 system_server 常驻 Root shell 完成，
+ * 本服务仅用于保持 App 进程常驻（加快悬浮预览/编辑器冷启动），
+ * 以及在 system_server shell 不可用时作为 ACTION_SHOOT 兜底（此时才请求 su）。
+ * 预热路径刻意不请求 su，避免每次进程重建都弹 Magisk 授权提示。
  */
 public class ScreenshotService extends Service {
 
@@ -25,18 +27,18 @@ public class ScreenshotService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        new Thread(this::ensureRoot).start();
+        // 预热：不请求 root，仅让进程存活
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int id) {
+        // 仅显式兜底抓拍才建立 root；普通预热不 exec su
         if (intent != null && ACTION_SHOOT.equals(intent.getAction())) {
             new Thread(this::shoot).start();
-        } else {
-            // 预热：建立 root 会话并保持进程常驻，加快后续触发
-            new Thread(this::ensureRoot).start();
         }
-        return START_STICKY;
+        // START_NOT_STICKY：进程被杀后不自动带空 intent 重启，避免重启/崩溃循环；
+        // 下次截图时 system_server 的 hook 会重新拉起本服务。
+        return START_NOT_STICKY;
     }
 
     private synchronized boolean ensureRoot() {

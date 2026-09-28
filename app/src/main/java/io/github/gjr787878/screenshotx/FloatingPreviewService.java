@@ -12,6 +12,7 @@ import android.graphics.Outline;
 import android.graphics.PixelFormat;
 import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
+import android.os.Handler;
 import android.os.IBinder;
 import android.provider.Settings;
 import android.view.Gravity;
@@ -23,23 +24,28 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.Toast;
 
-import java.io.DataOutputStream;
-
 /**
  * 截屏悬浮预览：抓拍后在屏幕角落悬浮约 2 秒。
  * 点击悬浮图 → 进入编辑器；不点击 → 倒计时结束自动保存到相册。
  * 悬浮窗不获取焦点（FLAG_NOT_FOCUSABLE），不打断当前应用，可在任意界面连续截图。
+ *
+ * 本服务不请求 Root：悬浮权限由 system_server 常驻 shell 预授权；
+ * 若权限缺失则直接打开编辑器兜底，保证截图不丢失。
  */
 public class FloatingPreviewService extends Service {
 
     private static final long DURATION = 2000L;
 
+    private final Handler main = new Handler(getMainLooper());
     private WindowManager wm;
     private View root;
     private View progressFill;
     private ValueAnimator animator;
     private String currentPath;
     private boolean finished = false;
+    // 代际令牌：每次展示新预览 +1；后台保存完成后仅在仍是当前代时才拆除视图，
+    // 避免连续截图时旧保存线程把新预览一并拆掉。
+    private int gen = 0;
 
     @Override public IBinder onBind(Intent i) { return null; }
 
@@ -49,19 +55,30 @@ public class FloatingPreviewService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int id) {
-        if (intent != null) {
-            String path = intent.getStringExtra("path");
-            if (path != null) show(path);
+        try {
+            if (intent != null) {
+                String path = intent.getStringExtra("path");
+                if (path != null) show(path);
+            }
+        } catch (Throwable t) {
+            // 任意异常：尽力把截图存入相册，保证不丢失，且不弹崩溃框
+            String p = intent != null ? intent.getStringExtra("path") : null;
+            if (p != null) { try { MediaSaver.saveToGallery(this, p); } catch (Throwable ignored) {} }
+            teardownView();
+            stopSelf();
         }
-        return START_STICKY;
+        // 不自动重启：避免进程被杀后带空 intent 重启形成“屡次停止运行”循环
+        return START_NOT_STICKY;
     }
 
     private void show(final String path) {
+        final int g;
+        synchronized (this) { g = ++gen; }
         currentPath = path;
         finished = false;
-        teardownView();
+        teardownView(); // 当前在主线程，可直接移除
 
-        if (!ensureOverlayPermission()) {
+        if (!Settings.canDrawOverlays(this)) {
             // 无悬浮权限：退回直接打开编辑器，保证截图不丢失
             openEditor(path);
             stopSelf();
@@ -74,7 +91,7 @@ public class FloatingPreviewService extends Service {
         float maxW = sw * 0.30f, maxH = sh * 0.26f;
 
         Bitmap thumb = decodeThumb(path, Math.round(maxW));
-        if (thumb == null) { saveAndFinish(path); return; }
+        if (thumb == null) { saveAndFinish(path, g); return; }
 
         // 按截图宽高比在最大框内 contain
         float ar = thumb.getWidth() / (float) thumb.getHeight();
@@ -96,7 +113,7 @@ public class FloatingPreviewService extends Service {
 
         try {
             wm.addView(root, lp);
-            startCountdown();
+            startCountdown(g);
         } catch (Throwable t) {
             // 添加失败：退回直接打开编辑器
             openEditor(path);
@@ -144,6 +161,7 @@ public class FloatingPreviewService extends Service {
         fl.setOnClickListener(v -> {
             if (finished) return;
             finished = true;
+            synchronized (FloatingPreviewService.this) { gen++; } // 使任何在途保存失效
             teardownView();
             openEditor(path);
             stopSelf();
@@ -151,7 +169,7 @@ public class FloatingPreviewService extends Service {
         root = fl;
     }
 
-    private void startCountdown() {
+    private void startCountdown(final int g) {
         progressFill.setScaleX(1f);
         animator = ValueAnimator.ofFloat(0f, 1f);
         animator.setDuration(DURATION);
@@ -161,23 +179,31 @@ public class FloatingPreviewService extends Service {
             @Override public void onAnimationEnd(Animator a) {
                 if (finished) return;
                 finished = true;
-                saveAndFinish(currentPath);
+                saveAndFinish(currentPath, g);
             }
         });
         animator.start();
     }
 
-    /** 超时：后台保存到相册后移除悬浮图。 */
-    private void saveAndFinish(final String path) {
+    /** 超时：后台保存到相册，回主线程后按代际决定是否移除悬浮图。 */
+    private void saveAndFinish(final String path, final int g) {
         new Thread(() -> {
+            boolean ok = false;
             try {
                 MediaSaver.saveToGallery(FloatingPreviewService.this, path);
-                toast("已保存到相册");
+                ok = true;
             } catch (Throwable t) {
-                toast("自动保存失败");
+                ok = false;
             }
-            teardownView();
-            stopSelf();
+            final boolean saved = ok;
+            main.post(() -> {
+                // 提示不具破坏性，始终给出
+                Toast.makeText(FloatingPreviewService.this,
+                        saved ? "已保存到相册" : "自动保存失败", Toast.LENGTH_SHORT).show();
+                if (g != gen) return; // 已有更新的预览接管，不拆新视图
+                teardownView();
+                stopSelf();
+            });
         }).start();
     }
 
@@ -188,23 +214,11 @@ public class FloatingPreviewService extends Service {
         try {
             startActivity(i);
         } catch (Throwable t) {
-            saveAndFinish(path);
+            // 连编辑器都打不开：直接存相册兜底
+            new Thread(() -> {
+                try { MediaSaver.saveToGallery(this, path); } catch (Throwable ignored) {}
+            }).start();
         }
-    }
-
-    /** 悬浮窗权限：已授予则直接用；否则尝试经 Root 静默授权。 */
-    private boolean ensureOverlayPermission() {
-        if (Settings.canDrawOverlays(this)) return true;
-        try {
-            Process p = Runtime.getRuntime().exec("su");
-            DataOutputStream o = new DataOutputStream(p.getOutputStream());
-            o.writeBytes("appops set " + getPackageName()
-                    + " SYSTEM_ALERT_WINDOW allow\n");
-            o.writeBytes("exit\n");
-            o.flush();
-            p.waitFor();
-        } catch (Throwable ignored) {}
-        return Settings.canDrawOverlays(this);
     }
 
     private Bitmap decodeThumb(String path, int targetW) {
@@ -223,6 +237,7 @@ public class FloatingPreviewService extends Service {
         }
     }
 
+    /** 仅在主线程调用：取消动画并移除悬浮窗。 */
     private void teardownView() {
         if (animator != null) { animator.cancel(); animator = null; }
         if (root != null) {
@@ -234,11 +249,6 @@ public class FloatingPreviewService extends Service {
     @Override public void onDestroy() {
         teardownView();
         super.onDestroy();
-    }
-
-    private void toast(final String s) {
-        android.os.Handler h = new android.os.Handler(getMainLooper());
-        h.post(() -> Toast.makeText(this, s, Toast.LENGTH_SHORT).show());
     }
 
     private int dp(float v) {
