@@ -46,6 +46,10 @@ public class ScreenshotService extends Service {
             rootOs = new DataOutputStream(rootProc.getOutputStream());
             drain(rootProc.getInputStream());
             drain(rootProc.getErrorStream());
+            // 预授权悬浮窗权限
+            rootOs.writeBytes("appops set io.github.gjr787878.screenshotx"
+                    + " SYSTEM_ALERT_WINDOW allow\n");
+            rootOs.flush();
             return true;
         } catch (Throwable t) {
             rootProc = null;
@@ -87,6 +91,8 @@ public class ScreenshotService extends Service {
         rootCmd("rm -f " + SHOT);
         rootCmd("screencap -p " + SHOT);
         rootCmd("chmod 666 " + SHOT);
-        rootCmd("am start -n io.github.gjr787878.screenshotx/.EditorActivity --es path " + SHOT);
+        // 抓拍后先悬浮预览（点击进编辑、超时自动存相册）
+        rootCmd("am startservice -n io.github.gjr787878.screenshotx/.FloatingPreviewService"
+                + " --es path " + SHOT);
     }
 }

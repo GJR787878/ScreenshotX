@@ -196,6 +196,10 @@ public class HookLogic {
             rootShellOs = new DataOutputStream(rootShellProc.getOutputStream());
             drainStatic(rootShellProc.getInputStream());
             drainStatic(rootShellProc.getErrorStream());
+            // 预授权悬浮窗权限，使抓拍后的悬浮预览可直接展示
+            rootShellOs.writeBytes("appops set io.github.gjr787878.screenshotx"
+                    + " SYSTEM_ALERT_WINDOW allow\n");
+            rootShellOs.flush();
             return true;
         } catch (Throwable t) {
             rootShellProc = null;
@@ -217,12 +221,13 @@ public class HookLogic {
                 os = rootShellOs;
             }
             if (os == null) return false;
-            // 后台预热 App 进程（无界面），与抓拍并发，缩短随后编辑器冷启动
+            // 后台预热 App 进程（无界面），与抓拍并发，缩短随后悬浮预览/编辑器冷启动
             os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService &\n");
             os.writeBytes("rm -f " + shot + "\n");
             os.writeBytes("screencap -p " + shot + "\n");
             os.writeBytes("chmod 666 " + shot + "\n");
-            os.writeBytes("am start -n io.github.gjr787878.screenshotx/.EditorActivity"
+            // 抓拍后先在角落悬浮预览（点击进编辑、超时自动存相册），不再直接打开编辑器
+            os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.FloatingPreviewService"
                     + " --es path " + shot + "\n");
             os.flush();
             log("direct shell shot dispatched");

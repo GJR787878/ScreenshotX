@@ -161,8 +161,10 @@ public class CropView extends View {
                     zc.panBy(x-lastX,y-lastY);
                     afterTransform();
                 }else if(dragMode>=0){
+                    // 拖手柄：只调整并约束裁剪框，不平移图片（图片保持原位）
                     resize(dragMode,x,y);
-                    afterTransform();
+                    clampCrop();
+                    invalidate();
                 }
                 lastX=x; lastY=y;
                 return true;
@@ -214,17 +216,37 @@ public class CropView extends View {
                 l=left?ax-w:ax; r=left?ax:ax+w;
                 t=top?ay-h:ay; b=top?ay:ay+h;
             }else if(mode==4||mode==6){
-                // 上下边：对边固定，由高度推导宽度，水平中心不变
+                // 上下边：对边固定，由高度推导宽度，水平中心不变；高度受图片宽/高上限约束
                 float h;
-                if(mode==4){ t=Math.min(y,b-dp(30)); h=b-t; }
-                else { b=Math.max(y,t+dp(30)); h=b-t; }
+                float hMaxW=maxCropW(cx)/ratio; // 宽度不超出图片时允许的高度
+                if(mode==4){
+                    float hMaxH=b-it;
+                    h=Math.min(b-y,Math.min(hMaxW,hMaxH));
+                    h=Math.max(h,dp(30));
+                    t=b-h;
+                }else{
+                    float hMaxH=ib-t;
+                    h=Math.min(y-t,Math.min(hMaxW,hMaxH));
+                    h=Math.max(h,dp(30));
+                    b=t+h;
+                }
                 float w=h*ratio;
                 l=cx-w/2; r=cx+w/2;
             }else{
-                // 左右边：对边固定，由宽度推导高度，垂直中心不变
+                // 左右边：对边固定，由宽度推导高度，垂直中心不变；宽度受图片高/宽上限约束
                 float w;
-                if(mode==5){ r=Math.max(x,l+dp(30)); w=r-l; }
-                else { l=Math.min(x,r-dp(30)); w=r-l; }
+                float wMaxH=maxCropH(cy)*ratio; // 高度不超出图片时允许的宽度
+                if(mode==5){
+                    float wMaxW=ir-l;
+                    w=Math.min(x-l,Math.min(wMaxH,wMaxW));
+                    w=Math.max(w,dp(30));
+                    r=l+w;
+                }else{
+                    float wMaxW=r-il;
+                    w=Math.min(r-x,Math.min(wMaxH,wMaxW));
+                    w=Math.max(w,dp(30));
+                    l=r-w;
+                }
                 float h=w/ratio;
                 t=cy-h/2; b=cy+h/2;
             }
