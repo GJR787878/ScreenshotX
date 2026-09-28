@@ -4,19 +4,17 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.view.MotionEvent;
 import android.view.View;
 
-/** 形状裁剪：比例选项 + 手柄调整 + 图片缩放/平移，确认后输出裁剪位图。 */
+/** 形状裁剪：比例选项 + 手柄调整 + 双指缩放/平移，确认后输出裁剪位图。 */
 public class CropView extends View {
 
     private Bitmap img;
-    private float fit=1f, baseLeft=0f, baseTop=0f;
-    private float zoom=1f, panX=0f, panY=0f;
+    private final ZoomController zc;
     private final RectF crop=new RectF();
     private float ratio=0f; // 0=自由
     private boolean inited=false;
@@ -30,11 +28,11 @@ public class CropView extends View {
     private final Paint gridPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint handlePaint=new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint handleRingPaint=new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Matrix matrix=new Matrix();
 
     public CropView(Context c){
         super(c);
         setBackgroundColor(Color.BLACK);
+        zc=new ZoomController(c,1f,5f,false,()->invalidate());
         dimPaint.setColor(0xB3000000);
         borderPaint.setStyle(Paint.Style.STROKE);
         borderPaint.setColor(Color.WHITE);
@@ -50,60 +48,45 @@ public class CropView extends View {
     }
 
     public void setImage(Bitmap b){
-        img=b; zoom=1f; panX=0f; panY=0f; inited=false; ratio=0f;
-        requestLayout(); invalidate();
+        img=b; ratio=0f; inited=false;
+        relayout();
+        invalidate();
+    }
+
+    /** 按当前视图尺寸重新计算变换与默认裁剪框；解决进入时显示不全。 */
+    private void relayout(){
+        if(img==null) return;
+        if(getWidth()>0 && getHeight()>0){
+            zc.setSize(getWidth(),getHeight(),img.getWidth(),img.getHeight());
+            zc.reset();
+            if(!inited){ initDefault(); inited=true; }
+        }
+    }
+
+    private void initDefault(){
+        float il=zc.left(), it=zc.top();
+        float ir=il+img.getWidth()*zc.dispScale();
+        float ib=it+img.getHeight()*zc.dispScale();
+        float ix=(ir-il)*0.08f, iy=(ib-it)*0.08f;
+        crop.set(il+ix,it+iy,ir-ix,ib-iy);
     }
 
     public void setRatio(float r){
         ratio=r;
         if(r>0 && crop.width()>0){
             float cx=crop.centerX(), cy=crop.centerY();
-            float h=crop.height();
-            float w=h*r;
-            // 若超出可显示范围则改用宽度约束
+            float h=crop.height(), w=h*r;
             float maxW=maxCropW(cx), maxH=maxCropH(cy);
             if(w>maxW){ w=maxW; h=w/r; }
             if(h>maxH){ h=maxH; w=h*r; }
             crop.set(cx-w/2,cy-h/2,cx+w/2,cy+h/2);
-            clampCrop();
         }
-        invalidate();
+        afterTransform();
     }
 
-    public float getZoom(){return zoom;}
-    public void zoomBy(float d){
-        if(img==null) return;
-        float nz=Math.max(1f,Math.min(3f,zoom+d));
-        if(nz==zoom) return;
-        float ccx=crop.centerX(), ccy=crop.centerY();
-        float ipx=(ccx-imgLeft())/dispScale();
-        float ipy=(ccy-imgTop())/dispScale();
-        zoom=nz;
-        panX=(ccx-ipx*dispScale())-baseLeft;
-        panY=(ccy-ipy*dispScale())-baseTop;
-        clampPan();
-        invalidate();
-    }
-
-    private float dispScale(){return fit*zoom;}
-    private float imgLeft(){return baseLeft+panX;}
-    private float imgTop(){return baseTop+panY;}
-
-    @Override protected void onSizeChanged(int w,int h,int ow,int oh){
-        if(img==null) return;
-        fit=Math.min(w/(float)img.getWidth(),h/(float)img.getHeight());
-        baseLeft=(w-img.getWidth()*fit)/2f;
-        baseTop=(h-img.getHeight()*fit)/2f;
-        if(!inited){
-            // 初始裁剪框 = 图片显示区域内缩 8%
-            float il=baseLeft, it=baseTop;
-            float ir=baseLeft+img.getWidth()*fit, ib=baseTop+img.getHeight()*fit;
-            float ix=(ir-il)*0.08f, iy=(ib-it)*0.08f;
-            crop.set(il+ix,it+iy,ir-ix,ib-iy);
-            inited=true;
-        }
-        clampPan();
-    }
+    private float dispScale(){return zc.dispScale();}
+    private float imgLeft(){return zc.left();}
+    private float imgTop(){return zc.top();}
 
     private float maxCropW(float cx){
         float avail=Math.min(cx-imgLeft(), imgLeft()+img.getWidth()*dispScale()-cx);
@@ -114,12 +97,17 @@ public class CropView extends View {
         return Math.max(60,avail*2f-8);
     }
 
+    @Override protected void onSizeChanged(int w,int h,int ow,int oh){
+        relayout();
+    }
+
     @Override protected void onDraw(Canvas canvas){
         if(img==null) return;
-        matrix.reset();
-        matrix.postTranslate(imgLeft(),imgTop());
-        matrix.postScale(dispScale(),dispScale(),imgLeft(),imgTop());
-        canvas.drawBitmap(img,matrix,null);
+        canvas.save();
+        canvas.translate(imgLeft(),imgTop());
+        canvas.scale(dispScale(),dispScale());
+        canvas.drawBitmap(img,0,0,null);
+        canvas.restore();
 
         // 裁剪框外压暗（EVEN_ODD 挖洞）
         Path p=new Path();
@@ -155,20 +143,28 @@ public class CropView extends View {
     @Override public boolean onTouchEvent(MotionEvent e){
         if(img==null) return false;
         float x=e.getX(),y=e.getY();
-        switch(e.getAction()){
+        int am=e.getActionMasked(), pc=e.getPointerCount();
+
+        zc.onTouch(e);
+
+        if(am==MotionEvent.ACTION_POINTER_DOWN && pc==2){ dragMode=-1; return true; }
+        if(zc.isPinching()||pc>=2){ afterTransform(); return true; }
+        if(am==MotionEvent.ACTION_POINTER_UP){ return true; }
+
+        switch(am){
             case MotionEvent.ACTION_DOWN:
                 lastX=x; lastY=y;
                 dragMode=hitHandle(x,y);
                 return true;
             case MotionEvent.ACTION_MOVE:
                 if(dragMode==8){
-                    panX+=x-lastX; panY+=y-lastY;
-                    clampPan();
+                    zc.panBy(x-lastX,y-lastY);
+                    afterTransform();
                 }else if(dragMode>=0){
                     resize(dragMode,x,y);
+                    afterTransform();
                 }
                 lastX=x; lastY=y;
-                invalidate();
                 return true;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL:
@@ -206,13 +202,12 @@ public class CropView extends View {
                 case 7: l=x; break;
             }
         }else{
-            // 锁定比例：角拖以对角为锚，边拖以中心为锚
             float ax,ay;
             if(mode==0){ax=r;ay=b;} else if(mode==1){ax=l;ay=b;}
             else if(mode==2){ax=l;ay=t;} else if(mode==3){ax=r;ay=t;}
             else {ax=crop.centerX();ay=crop.centerY();}
             float w=Math.abs(x-ax),h=Math.abs(y-ay);
-            if(mode>=4){ // 边：按移动的那个维度算
+            if(mode>=4){
                 if(mode==4||mode==6){ h=Math.abs(y-ay); w=h*ratio; }
                 else { w=Math.abs(x-ax); h=w/ratio; }
             }else{
@@ -234,29 +229,39 @@ public class CropView extends View {
         if(r-l<dp(30)){ float c=(l+r)/2;l=c-dp(15);r=c+dp(15);}
         if(b-t<dp(30)){ float c=(t+b)/2;t=c-dp(15);b=c+dp(15);}
         crop.set(l,t,r,b);
-        clampCrop();
-        clampPan();
     }
 
-    /** 裁剪框不得超出图片映射区域。 */
+    /** 双指/单指平移后：先尽量让图片覆盖框，再把框限制在图片范围内。 */
+    private void afterTransform(){
+        coverFrame();
+        clampCrop();
+        invalidate();
+    }
+
+    /** 最小平移使图片覆盖裁剪框（zoom 足够时）。 */
+    private void coverFrame(){
+        float il=imgLeft(),it=imgTop();
+        float ir=il+img.getWidth()*dispScale(),ib=it+img.getHeight()*dispScale();
+        float dx=0f,dy=0f;
+        if(il>crop.left) dx=crop.left-il;
+        if(ir<crop.right) dx=crop.right-ir;
+        if(it>crop.top) dy=crop.top-it;
+        if(ib<crop.bottom) dy=crop.bottom-ib;
+        if(dx!=0f||dy!=0f) zc.panBy(dx,dy);
+    }
+
+    /** 裁剪框不得超出图片映射区域；锁定比例时同步收缩另一维度。 */
     private void clampCrop(){
         float il=imgLeft(),it=imgTop();
         float ir=il+img.getWidth()*dispScale(),ib=it+img.getHeight()*dispScale();
-        float l=crop.left,t=crop.top,r=crop.right,b=crop.bottom;
-        l=Math.max(il,l); r=Math.min(ir,r);
-        t=Math.max(it,t); b=Math.min(ib,b);
+        float l=Math.max(crop.left,il), t=Math.max(crop.top,it);
+        float r=Math.min(crop.right,ir), b=Math.min(crop.bottom,ib);
+        if(ratio>0){
+            float w=r-l,h=b-t;
+            if(w/h>ratio){ float nw=h*ratio; float cx=(l+r)/2; l=cx-nw/2;r=cx+nw/2; }
+            else { float nh=w/ratio; float cy=(t+b)/2; t=cy-nh/2;b=cy+nh/2; }
+        }
         crop.set(l,t,r,b);
-    }
-
-    /** 平移后图片必须始终覆盖裁剪框。 */
-    private void clampPan(){
-        if(img==null) return;
-        float iw=img.getWidth()*dispScale(), ih=img.getHeight()*dispScale();
-        float il=imgLeft(),it=imgTop(),ir=il+iw,ib=it+ih;
-        if(il>crop.left) panX+=crop.left-il;
-        if(ir<crop.right) panX+=crop.right-ir;
-        if(it>crop.top) panY+=crop.top-it;
-        if(ib<crop.bottom) panY+=crop.bottom-ib;
     }
 
     /** 输出裁剪后的位图（裁剪框映射回原图像素）。 */

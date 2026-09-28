@@ -38,16 +38,14 @@ public class EditorActivity extends Activity {
         R.drawable.ic_pen_fountain, R.drawable.ic_pen_eraser};
     private final String[] PEN_NAMES = {"圆珠笔","荧光笔","铅笔","钢笔","橡皮擦"};
 
-    // 马赛克
-    private final TextView[] effectChips = new TextView[3];
-    private final TextView[] wayChips = new TextView[2];
+    // 马赛克：单行 5 个按钮（0-2 效果，3-4 方式）
+    private final TextView[] mosChips = new TextView[5];
     private int curEffect = DrawView.MOS_PIXEL;
     private boolean curRect = false;
 
     // 裁剪
     private final TextView[] ratioChips = new TextView[6];
     private final float[] RATIOS = {0f,1f,4f/3f,3f/4f,16f/9f,9f/16f};
-    private TextView zoomLabel;
 
     private final ImageView[] modeCircles = new ImageView[3];
     private final TextView[] modeLabels = new TextView[3];
@@ -95,13 +93,14 @@ public class EditorActivity extends Activity {
         root.addView(bottom,new LinearLayout.LayoutParams(-1,-2));
 
         panelHost=new FrameLayout(this);
-        bottom.addView(panelHost,new LinearLayout.LayoutParams(-1,-2));
+        // 固定面板高度：三种模式面板高度一致，切换时中间预览图不随之变动
+        bottom.addView(panelHost,new LinearLayout.LayoutParams(-1,dp(134)));
         markPanel=buildMarkPanel();
         mosaicPanel=buildMosaicPanel();
         cropPanel=buildCropPanel();
-        panelHost.addView(markPanel,new FrameLayout.LayoutParams(-1,-2));
-        panelHost.addView(mosaicPanel,new FrameLayout.LayoutParams(-1,-2));
-        panelHost.addView(cropPanel,new FrameLayout.LayoutParams(-1,-2));
+        panelHost.addView(markPanel,new FrameLayout.LayoutParams(-1,-1));
+        panelHost.addView(mosaicPanel,new FrameLayout.LayoutParams(-1,-1));
+        panelHost.addView(cropPanel,new FrameLayout.LayoutParams(-1,-1));
 
         // 主功能行：标记 / 马赛克 / 形状裁剪
         LinearLayout funcs=new LinearLayout(this);
@@ -206,30 +205,28 @@ public class EditorActivity extends Activity {
     private View buildMosaicPanel(){
         LinearLayout panel=new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER_VERTICAL);
 
-        // 效果行
-        panel.addView(label("效果"));
-        LinearLayout effRow=new LinearLayout(this);
-        effRow.setGravity(Gravity.CENTER);
-        String[] en={"像素化","高斯模糊","黑色遮挡"};
-        for(int i=0;i<3;i++){
+        // 单行：像素 / 模糊 /黑块 ｜ 涂抹 / 框选
+        LinearLayout row=new LinearLayout(this);
+        row.setGravity(Gravity.CENTER);
+        String[] names={"像素","模糊","黑块","涂抹","框选"};
+        for(int i=0;i<5;i++){
+            if(i==3){ // 效果与方式之间加一条竖向分隔
+                View d=new View(this);
+                LinearLayout.LayoutParams dlp=new LinearLayout.LayoutParams(dp(1),dp(24));
+                dlp.setMargins(dp(5),0,dp(5),0);
+                d.setBackgroundColor(0x44FFFFFF);
+                row.addView(d,dlp);
+            }
             final int idx=i;
-            effectChips[i]=chip(en[i],i==curEffect,v->selectEffect(idx));
-            effRow.addView(effectChips[i],chipLp());
+            boolean sel=i<3 ? i==curEffect : (i==4)==curRect;
+            mosChips[i]=chip(names[i],sel,v->{
+                if(idx<3) selectEffect(idx); else selectWay(idx==4);
+            });
+            row.addView(mosChips[i],chipLp());
         }
-        panel.addView(effRow);
-
-        // 方式行
-        panel.addView(label("方式"));
-        LinearLayout wayRow=new LinearLayout(this);
-        wayRow.setGravity(Gravity.CENTER);
-        String[] wn={"涂抹","框选"};
-        for(int i=0;i<2;i++){
-            final int idx=i;
-            wayChips[i]=chip(wn[i],(i==1)==curRect,v->selectWay(idx==1));
-            wayRow.addView(wayChips[i],chipLp());
-        }
-        panel.addView(wayRow);
+        panel.addView(row,new LinearLayout.LayoutParams(-1,-2));
 
         // 粗细（涂抹用）
         panel.addView(buildWidthRow());
@@ -239,18 +236,25 @@ public class EditorActivity extends Activity {
     private void selectEffect(int idx){
         curEffect=idx;
         drawView.setMosaicEffect(idx);
-        for(int i=0;i<3;i++) styleChip(effectChips[i],i==idx);
+        refreshMosChips();
     }
     private void selectWay(boolean rect){
         curRect=rect;
         drawView.setMosaicRect(rect);
-        for(int i=0;i<2;i++) styleChip(wayChips[i],(i==1)==rect);
+        refreshMosChips();
+    }
+    private void refreshMosChips(){
+        for(int i=0;i<5;i++){
+            boolean sel=i<3 ? i==curEffect : (i==4)==curRect;
+            styleChip(mosChips[i],sel);
+        }
     }
 
     // ================= 裁剪面板 =================
     private View buildCropPanel(){
         LinearLayout panel=new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER_VERTICAL);
 
         panel.addView(label("比例"));
         LinearLayout rRow=new LinearLayout(this);
@@ -263,22 +267,7 @@ public class EditorActivity extends Activity {
         }
         panel.addView(rRow);
 
-        // 缩放行
-        LinearLayout zRow=new LinearLayout(this);
-        zRow.setGravity(Gravity.CENTER);
-        TextView minus=chip("－",false,v->{cropView.zoomBy(-0.25f);updateZoomLabel();});
-        zoomLabel=new TextView(this);
-        zoomLabel.setText("100%"); zoomLabel.setTextColor(0xFFFFFFFF);
-        zoomLabel.setTextSize(13); zoomLabel.setGravity(Gravity.CENTER);
-        zoomLabel.setMinWidth(dp(64));
-        TextView plus=chip("＋",false,v->{cropView.zoomBy(0.25f);updateZoomLabel();});
-        zRow.addView(minus,chipLp());
-        zRow.addView(zoomLabel,new LinearLayout.LayoutParams(0,-2,1));
-        zRow.addView(plus,chipLp());
-        panel.addView(label("缩放"));
-        panel.addView(zRow);
-
-        // 操作行
+        // 操作行（缩放统一由双指捏合完成，不再提供按钮）
         LinearLayout aRow=new LinearLayout(this);
         aRow.setGravity(Gravity.CENTER);
         TextView cancel=chip("取消",false,v->cancelCrop());
@@ -287,8 +276,8 @@ public class EditorActivity extends Activity {
         LinearLayout.LayoutParams al=chipLp(); al.weight=1;
         aRow.addView(cancel,cl);
         aRow.addView(apply,al);
-        LinearLayout.LayoutParams arp=new LinearLayout.LayoutParams(-1,dp(46));
-        arp.topMargin=dp(6);
+        LinearLayout.LayoutParams arp=new LinearLayout.LayoutParams(-1,dp(48));
+        arp.topMargin=dp(14);
         panel.addView(aRow,arp);
         return panel;
     }
@@ -296,9 +285,6 @@ public class EditorActivity extends Activity {
     private void selectRatio(int idx){
         cropView.setRatio(RATIOS[idx]);
         for(int i=0;i<6;i++) styleChip(ratioChips[i],i==idx);
-    }
-    private void updateZoomLabel(){
-        zoomLabel.setText(Math.round(cropView.getZoom()*100)+"%");
     }
 
     private void applyCrop(){
@@ -329,7 +315,6 @@ public class EditorActivity extends Activity {
             cropView.setVisibility(View.VISIBLE);
             drawView.setVisibility(View.GONE);
             for(int i=0;i<6;i++) styleChip(ratioChips[i],i==0);
-            zoomLabel.setText("100%");
         }else{
             cropView.setVisibility(View.GONE);
             drawView.setVisibility(View.VISIBLE);

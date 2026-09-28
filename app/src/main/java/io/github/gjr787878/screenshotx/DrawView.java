@@ -39,6 +39,10 @@ public class DrawView extends View {
     private int tool = BALL, color = Color.RED;
     private float widthScale = 1f; // 全局粗细倍率
 
+    // 双指缩放/平移（标记与马赛克通用）
+    private final ZoomController zoomCtl;
+    private boolean gestureActive=false;
+
     // ===== 马赛克状态 =====
     private boolean mosaicMode = false;
     private int mosaicEffect = MOS_PIXEL;
@@ -65,14 +69,13 @@ public class DrawView extends View {
     }
     public float getWidthScale(){return widthScale;}
 
-    // FIT_CENTER 显示参数
-    private float scale=1, drawLeft=0, drawTop=0;
-
     private final List<Bitmap> undoStack = new ArrayList<>();
     private final List<Bitmap> redoStack = new ArrayList<>();
 
     public DrawView(Context c) {
         super(c);
+        zoomCtl=new ZoomController(c,1f,6f,true,()->invalidate());
+
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setStrokeCap(Paint.Cap.ROUND);
@@ -112,6 +115,9 @@ public class DrawView extends View {
         mosBrush = bw*0.045f;
         undoStack.clear();
         redoStack.clear();
+        zoomCtl.reset();
+        if(getWidth()>0 && getHeight()>0)
+            zoomCtl.setSize(getWidth(),getHeight(),base.getWidth(),base.getHeight());
         requestLayout();
         invalidate();
     }
@@ -146,7 +152,7 @@ public class DrawView extends View {
         paint.setStrokeWidth(widthFor(tool)*widthScale);
         markerPaint.setStrokeWidth(widthFor(MARKER)*widthScale);
         if(tool==ERASER){
-            paint.setXfermode(new android.graphics.PorterDuffXfermode(PorterDuff.Mode.CLEAR));
+            paint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
             paint.setAlpha(255);
         }else{
             paint.setXfermode(null);
@@ -161,16 +167,14 @@ public class DrawView extends View {
 
     @Override protected void onSizeChanged(int w,int h,int ow,int oh){
         if(base==null) return;
-        scale = Math.min(w/(float)base.getWidth(), h/(float)base.getHeight());
-        drawLeft = (w - base.getWidth()*scale)/2f;
-        drawTop  = (h - base.getHeight()*scale)/2f;
+        zoomCtl.setSize(w,h,base.getWidth(),base.getHeight());
     }
 
     @Override protected void onDraw(Canvas canvas){
         if(base==null) return;
         canvas.save();
-        canvas.translate(drawLeft, drawTop);
-        canvas.scale(scale, scale);
+        canvas.translate(zoomCtl.left(),zoomCtl.top());
+        canvas.scale(zoomCtl.dispScale(),zoomCtl.dispScale());
         canvas.drawBitmap(base, 0, 0, null);
         canvas.drawBitmap(overlay, 0, 0, null);
         // 正在绘制的荧光笔实时预览，统一 40% 透明
@@ -182,35 +186,44 @@ public class DrawView extends View {
         canvas.restore();
     }
 
-    // 触摸坐标 → 图片坐标
-    private float[] toImg(float x,float y){
-        return new float[]{(x-drawLeft)/scale, (y-drawTop)/scale};
-    }
-
     @Override public boolean onTouchEvent(MotionEvent e){
         if(base==null) return false;
-        float[] p=toImg(e.getX(),e.getY());
+        int am=e.getActionMasked();
+        int pc=e.getPointerCount();
+
+        zoomCtl.onTouch(e);
+
+        // 第二指落下：进入双指缩放，取消当前未完成的单指手势
+        if(am==MotionEvent.ACTION_POINTER_DOWN && pc==2){
+            cancelGesture();
+            invalidate();
+            return true;
+        }
+        if(zoomCtl.isPinching() || pc>=2) return true;
+        if(am==MotionEvent.ACTION_POINTER_UP) return true;
+
+        float[] p=zoomCtl.toImg(e.getX(),e.getY());
         float x=p[0], y=p[1];
 
         if(mosaicMode){
-            // 马赛克：坐标钳制到图片内，便于边缘涂抹
             x=Math.max(0,Math.min(base.getWidth(),x));
             y=Math.max(0,Math.min(base.getHeight(),y));
-            handleMosaic(e,x,y);
+            handleMosaic(am,x,y);
             invalidate();
             return true;
         }
 
-        // 忽略图片外的触摸
+        // 画笔：忽略图片外的触摸
         if(x<0||y<0||x>base.getWidth()||y>base.getHeight()){
-            if(e.getAction()==MotionEvent.ACTION_UP) path.reset();
+            if(am==MotionEvent.ACTION_UP){ path.reset(); gestureActive=false; }
             return true;
         }
-        switch(e.getAction()){
+        switch(am){
             case MotionEvent.ACTION_DOWN:
                 pushUndo(); applyStyle();
                 path.reset(); path.moveTo(x,y);
                 curX=x; curY=y;
+                gestureActive=true;
                 if(tool==MARKER){
                     markerLayer.eraseColor(Color.TRANSPARENT);
                     markerCanvas.drawPoint(x,y,markerPaint);
@@ -219,12 +232,15 @@ public class DrawView extends View {
                 }
                 break;
             case MotionEvent.ACTION_MOVE:
+                if(!gestureActive) break;
                 path.quadTo(curX,curY,(x+curX)/2,(y+curY)/2);
                 if(tool==MARKER) markerCanvas.drawPath(path,markerPaint);
                 else overlayCanvas.drawPath(path,paint);
                 curX=x; curY=y;
                 break;
             case MotionEvent.ACTION_UP:
+                if(!gestureActive) break;
+                gestureActive=false;
                 if(tool==MARKER){
                     markerCanvas.drawPath(path,markerPaint);
                     // 整笔统一按 40% 合成到 overlay，随后清空临时图层
@@ -241,12 +257,27 @@ public class DrawView extends View {
         return true;
     }
 
+    private void cancelGesture(){
+        if(mosaicMode){
+            mosDrawing=false;
+            if(mosPreview!=null) mosPreview.eraseColor(Color.TRANSPARENT);
+            mosPath.reset();
+        }else if(tool==MARKER){
+            if(markerLayer!=null) markerLayer.eraseColor(Color.TRANSPARENT);
+            path.reset();
+        }else{
+            path.reset();
+        }
+        gestureActive=false;
+    }
+
     // ================= 马赛克触摸 =================
-    private void handleMosaic(MotionEvent e, float x, float y){
-        switch(e.getAction()){
+    private void handleMosaic(int am, float x, float y){
+        switch(am){
             case MotionEvent.ACTION_DOWN:
                 pushUndo();
                 mosDrawing=true;
+                gestureActive=true;
                 mosSX=mosCX=x; mosSY=mosCY=y;
                 minX=maxX=x; minY=maxY=y;
                 mosPreview.eraseColor(Color.TRANSPARENT);
@@ -271,7 +302,8 @@ public class DrawView extends View {
             case MotionEvent.ACTION_CANCEL:
                 if(!mosDrawing) return;
                 mosDrawing=false;
-                if(mosaicRect){ mosCX=x; mosCY=y; finishRect(); }
+                gestureActive=false;
+                if(mosaicRect){ finishRect(); }
                 else finishBrush();
                 mosPreview.eraseColor(Color.TRANSPARENT);
                 mosPath.reset();
@@ -399,7 +431,7 @@ public class DrawView extends View {
 
     public void undo(){
         if(undoStack.isEmpty()||overlay==null) return;
-        redoStack.add(overlay.copy(Bitmap.Config.ARGB_8888,true));
+        redoStack.add(overlay.copy(Bitmap.Config.ARGB_8888,false));
         Bitmap prev=undoStack.remove(undoStack.size()-1);
         overlay.eraseColor(Color.TRANSPARENT);
         new Canvas(overlay).drawBitmap(prev,0,0,null);
