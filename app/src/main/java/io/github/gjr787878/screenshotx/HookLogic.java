@@ -21,9 +21,11 @@ public class HookLogic {
 
     private static final String LOG_FILE = "/data/system/screenshotx_diag.log";
     private static Context sysContext;
+    private static ClassLoader serverCl;
     private static long lastTrigger = 0;
     private static final Handler OWN = new Handler(Looper.getMainLooper());
     private static boolean logInited = false;
+    private static volatile boolean installed = false;
 
     public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
@@ -47,6 +49,11 @@ public class HookLogic {
     }
 
     public static void install(ClassLoader cl) {
+        if (installed) {
+            log("install already done, skip");
+            return;
+        }
+        serverCl = cl;
         log("install: start hooking in system_server");
 
         Class<?> pwm;
@@ -118,15 +125,35 @@ public class HookLogic {
             log("ScreenshotHelper hook failed: " + t);
         }
 
+        installed = true;
         log("install: hooking done");
+    }
+
+    /** 兜底获取系统 Context：system_server 内通过 ActivityThread.getSystemContext()，不依赖 init hook 时机。 */
+    private static Context resolveSystemContext() {
+        try {
+            ClassLoader cl = serverCl != null ? serverCl : ClassLoader.getSystemClassLoader();
+            Class<?> at = Class.forName("android.app.ActivityThread", false, cl);
+            Object thread = at.getMethod("currentActivityThread").invoke(null);
+            Object ctx = at.getMethod("getSystemContext").invoke(thread);
+            if (ctx instanceof Context) {
+                log("system context resolved via ActivityThread");
+                return (Context) ctx;
+            }
+        } catch (Throwable t) {
+            log("resolveSystemContext failed: " + t);
+        }
+        return null;
     }
 
     private static void fire() {
         Context c = sysContext;
+        if (c == null) c = resolveSystemContext();
         if (c == null) {
             log("fire skipped, no context");
             return;
         }
+        sysContext = c;
         try {
             Intent svc = new Intent();
             svc.setClassName("io.github.gjr787878.screenshotx",
