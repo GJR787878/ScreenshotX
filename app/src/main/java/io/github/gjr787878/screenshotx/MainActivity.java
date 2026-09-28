@@ -46,6 +46,8 @@ public class MainActivity extends Activity {
         rootStatus.setPadding(0, 0, 0, dp(20));
         root.addView(rootStatus);
         requestRoot();
+        // 打开 App 时预热截屏服务（常驻进程 + 持久 root shell），加快首次触发
+        try { startService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
 
         TextView steps = new TextView(this);
         steps.setText("使用方法：\n"
