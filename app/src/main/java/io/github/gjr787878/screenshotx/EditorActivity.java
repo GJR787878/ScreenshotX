@@ -8,6 +8,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -22,7 +23,11 @@ import java.io.OutputStream;
 public class EditorActivity extends Activity {
 
     private DrawView drawView;
-    private int selectedFunc = 0;
+    private CropView cropView;
+    private FrameLayout panelHost;
+    private View markPanel, mosaicPanel, cropPanel;
+    private int mode = 0;
+
     private int curColor = Color.RED;
     private ColorWheelView wheel;
     private final ImageView[] penIcons = new ImageView[5];
@@ -33,6 +38,20 @@ public class EditorActivity extends Activity {
         R.drawable.ic_pen_fountain, R.drawable.ic_pen_eraser};
     private final String[] PEN_NAMES = {"圆珠笔","荧光笔","铅笔","钢笔","橡皮擦"};
 
+    // 马赛克
+    private final TextView[] effectChips = new TextView[3];
+    private final TextView[] wayChips = new TextView[2];
+    private int curEffect = DrawView.MOS_PIXEL;
+    private boolean curRect = false;
+
+    // 裁剪
+    private final TextView[] ratioChips = new TextView[6];
+    private final float[] RATIOS = {0f,1f,4f/3f,3f/4f,16f/9f,9f/16f};
+    private TextView zoomLabel;
+
+    private final ImageView[] modeCircles = new ImageView[3];
+    private final TextView[] modeLabels = new TextView[3];
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -41,7 +60,6 @@ public class EditorActivity extends Activity {
         Bitmap src=BitmapFactory.decodeFile(path);
         if(src==null){finish();return;}
 
-        // 根：垂直布局
         LinearLayout root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(0xFF000000);
@@ -57,21 +75,53 @@ public class EditorActivity extends Activity {
         topIcon(top,R.drawable.ic_redo,v->drawView.redo());
         top.addView(stretch());
         topIcon(top,R.drawable.ic_share,v->Toast.makeText(this,"分享",Toast.LENGTH_SHORT).show());
-        topIcon(top,R.drawable.ic_check,v->save());
+        topIcon(top,R.drawable.ic_check,v->topConfirm());
 
-        // 中间绘图区(占剩余)
+        // 中间：DrawView 与 CropView 叠加
+        FrameLayout middle=new FrameLayout(this);
         drawView=new DrawView(this);
         drawView.setBitmap(src);
         drawView.setColor(curColor);
-        root.addView(drawView,new LinearLayout.LayoutParams(-1,0,1));
+        middle.addView(drawView,new FrameLayout.LayoutParams(-1,-1));
+        cropView=new CropView(this);
+        cropView.setVisibility(View.GONE);
+        middle.addView(cropView,new FrameLayout.LayoutParams(-1,-1));
+        root.addView(middle,new LinearLayout.LayoutParams(-1,0,1));
 
-        // 底部工具栏
+        // 底部
         LinearLayout bottom=new LinearLayout(this);
         bottom.setOrientation(LinearLayout.VERTICAL);
-        bottom.setPadding(dp(16),dp(4),dp(16),dp(14));
+        bottom.setPadding(dp(16),dp(4),dp(16),dp(12));
         root.addView(bottom,new LinearLayout.LayoutParams(-1,-2));
 
-        // 笔条(深色圆角横条，wrap高度给tooltip留空间)
+        panelHost=new FrameLayout(this);
+        bottom.addView(panelHost,new LinearLayout.LayoutParams(-1,-2));
+        markPanel=buildMarkPanel();
+        mosaicPanel=buildMosaicPanel();
+        cropPanel=buildCropPanel();
+        panelHost.addView(markPanel,new FrameLayout.LayoutParams(-1,-2));
+        panelHost.addView(mosaicPanel,new FrameLayout.LayoutParams(-1,-2));
+        panelHost.addView(cropPanel,new FrameLayout.LayoutParams(-1,-2));
+
+        // 主功能行：标记 / 马赛克 / 形状裁剪
+        LinearLayout funcs=new LinearLayout(this);
+        funcs.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,dp(86));
+        flp.topMargin=dp(4);
+        bottom.addView(funcs,flp);
+        addMode(funcs,R.drawable.ic_pen,"标记",0);
+        addMode(funcs,R.drawable.ic_mosaic,"马赛克",1);
+        addMode(funcs,R.drawable.ic_crop,"形状裁剪",2);
+
+        setContentView(root);
+        selectMode(0);
+    }
+
+    // ================= 标记面板 =================
+    private View buildMarkPanel(){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+
         LinearLayout penBar=new LinearLayout(this);
         penBar.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
         penBar.setPadding(dp(8),dp(6),dp(8),dp(8));
@@ -79,8 +129,8 @@ public class EditorActivity extends Activity {
         barBg.setCornerRadius(dp(18)); barBg.setColor(0x3326262A);
         penBar.setBackground(barBg);
         LinearLayout.LayoutParams barLp=new LinearLayout.LayoutParams(-1,-2);
-        barLp.setMargins(0,0,0,dp(12));
-        bottom.addView(penBar,barLp);
+        barLp.setMargins(0,0,0,dp(10));
+        panel.addView(penBar,barLp);
 
         for(int i=0;i<5;i++){
             LinearLayout item=new LinearLayout(this);
@@ -112,7 +162,6 @@ public class EditorActivity extends Activity {
         }
         selectPen(0);
 
-        // 颜色轮
         wheel=new ColorWheelView(this);
         wheel.setCenterColor(curColor);
         wheel.setOnClickListener(v->openPicker());
@@ -121,7 +170,11 @@ public class EditorActivity extends Activity {
         wheelWrap.addView(wheel,new LinearLayout.LayoutParams(dp(40),dp(40)));
         penBar.addView(wheelWrap,new LinearLayout.LayoutParams(dp(50),dp(60)));
 
-        // 粗细滑块行(笔条与功能行之间)
+        panel.addView(buildWidthRow());
+        return panel;
+    }
+
+    private View buildWidthRow(){
         LinearLayout widthRow=new LinearLayout(this);
         widthRow.setOrientation(LinearLayout.HORIZONTAL);
         widthRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -130,7 +183,7 @@ public class EditorActivity extends Activity {
         wlabel.setText("粗细"); wlabel.setTextColor(0xCCFFFFFF); wlabel.setTextSize(12);
         widthRow.addView(wlabel,new LinearLayout.LayoutParams(-2,-2));
         android.widget.SeekBar widthSeek=new android.widget.SeekBar(this);
-        widthSeek.setMax(570); widthSeek.setProgress(70); // 0.3x ~ 6.0x，默认1.0
+        widthSeek.setMax(570); widthSeek.setProgress(70);
         widthSeek.getProgressDrawable().setColorFilter(0xFF9AA0AA,
                 android.graphics.PorterDuff.Mode.SRC_IN);
         widthSeek.getThumb().setColorFilter(0xFFFFFFFF,
@@ -143,20 +196,179 @@ public class EditorActivity extends Activity {
             @Override public void onStartTrackingTouch(android.widget.SeekBar sb){}
             @Override public void onStopTrackingTouch(android.widget.SeekBar sb){}
         });
-        bottom.addView(widthRow,new LinearLayout.LayoutParams(-1,dp(42)));
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,dp(40));
+        lp.bottomMargin=dp(2);
+        widthRow.setLayoutParams(lp);
+        return widthRow;
+    }
 
-        // 功能行
-        LinearLayout funcs=new LinearLayout(this);
-        funcs.setGravity(Gravity.CENTER);
-        bottom.addView(funcs,new LinearLayout.LayoutParams(-1,dp(88)));
-        addFunc(funcs,R.drawable.ic_pen,"标记",0);
-        addFunc(funcs,R.drawable.ic_text,"文字",1);
-        addFunc(funcs,R.drawable.ic_mosaic,"马赛克",2);
-        addFunc(funcs,R.drawable.ic_scan,"识文",3);
-        addFunc(funcs,R.drawable.ic_crop,"形状裁剪",4);
-        addFunc(funcs,R.drawable.ic_pen,"高级编辑",5);
+    // ================= 马赛克面板 =================
+    private View buildMosaicPanel(){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
 
-        setContentView(root);
+        // 效果行
+        panel.addView(label("效果"));
+        LinearLayout effRow=new LinearLayout(this);
+        effRow.setGravity(Gravity.CENTER);
+        String[] en={"像素化","高斯模糊","黑色遮挡"};
+        for(int i=0;i<3;i++){
+            final int idx=i;
+            effectChips[i]=chip(en[i],i==curEffect,v->selectEffect(idx));
+            effRow.addView(effectChips[i],chipLp());
+        }
+        panel.addView(effRow);
+
+        // 方式行
+        panel.addView(label("方式"));
+        LinearLayout wayRow=new LinearLayout(this);
+        wayRow.setGravity(Gravity.CENTER);
+        String[] wn={"涂抹","框选"};
+        for(int i=0;i<2;i++){
+            final int idx=i;
+            wayChips[i]=chip(wn[i],(i==1)==curRect,v->selectWay(idx==1));
+            wayRow.addView(wayChips[i],chipLp());
+        }
+        panel.addView(wayRow);
+
+        // 粗细（涂抹用）
+        panel.addView(buildWidthRow());
+        return panel;
+    }
+
+    private void selectEffect(int idx){
+        curEffect=idx;
+        drawView.setMosaicEffect(idx);
+        for(int i=0;i<3;i++) styleChip(effectChips[i],i==idx);
+    }
+    private void selectWay(boolean rect){
+        curRect=rect;
+        drawView.setMosaicRect(rect);
+        for(int i=0;i<2;i++) styleChip(wayChips[i],(i==1)==rect);
+    }
+
+    // ================= 裁剪面板 =================
+    private View buildCropPanel(){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+
+        panel.addView(label("比例"));
+        LinearLayout rRow=new LinearLayout(this);
+        rRow.setGravity(Gravity.CENTER);
+        String[] rn={"自由","1:1","4:3","3:4","16:9","9:16"};
+        for(int i=0;i<6;i++){
+            final int idx=i;
+            ratioChips[i]=chip(rn[i],i==0,v->selectRatio(idx));
+            rRow.addView(ratioChips[i],chipLp());
+        }
+        panel.addView(rRow);
+
+        // 缩放行
+        LinearLayout zRow=new LinearLayout(this);
+        zRow.setGravity(Gravity.CENTER);
+        TextView minus=chip("－",false,v->{cropView.zoomBy(-0.25f);updateZoomLabel();});
+        zoomLabel=new TextView(this);
+        zoomLabel.setText("100%"); zoomLabel.setTextColor(0xFFFFFFFF);
+        zoomLabel.setTextSize(13); zoomLabel.setGravity(Gravity.CENTER);
+        zoomLabel.setMinWidth(dp(64));
+        TextView plus=chip("＋",false,v->{cropView.zoomBy(0.25f);updateZoomLabel();});
+        zRow.addView(minus,chipLp());
+        zRow.addView(zoomLabel,new LinearLayout.LayoutParams(0,-2,1));
+        zRow.addView(plus,chipLp());
+        panel.addView(label("缩放"));
+        panel.addView(zRow);
+
+        // 操作行
+        LinearLayout aRow=new LinearLayout(this);
+        aRow.setGravity(Gravity.CENTER);
+        TextView cancel=chip("取消",false,v->cancelCrop());
+        TextView apply=chip("应用裁剪",true,v->applyCrop());
+        LinearLayout.LayoutParams cl=chipLp(); cl.weight=1;
+        LinearLayout.LayoutParams al=chipLp(); al.weight=1;
+        aRow.addView(cancel,cl);
+        aRow.addView(apply,al);
+        LinearLayout.LayoutParams arp=new LinearLayout.LayoutParams(-1,dp(46));
+        arp.topMargin=dp(6);
+        panel.addView(aRow,arp);
+        return panel;
+    }
+
+    private void selectRatio(int idx){
+        cropView.setRatio(RATIOS[idx]);
+        for(int i=0;i<6;i++) styleChip(ratioChips[i],i==idx);
+    }
+    private void updateZoomLabel(){
+        zoomLabel.setText(Math.round(cropView.getZoom()*100)+"%");
+    }
+
+    private void applyCrop(){
+        Bitmap c=cropView.getCropped();
+        drawView.setBitmap(c);
+        drawView.setColor(curColor);
+        cropView.setVisibility(View.GONE);
+        drawView.setVisibility(View.VISIBLE);
+        selectMode(0);
+        Toast.makeText(this,"已裁剪",Toast.LENGTH_SHORT).show();
+    }
+    private void cancelCrop(){
+        cropView.setVisibility(View.GONE);
+        drawView.setVisibility(View.VISIBLE);
+        selectMode(0);
+    }
+
+    // ================= 模式切换 =================
+    private void selectMode(int m){
+        mode=m;
+        markPanel.setVisibility(m==0?View.VISIBLE:View.GONE);
+        mosaicPanel.setVisibility(m==1?View.VISIBLE:View.GONE);
+        cropPanel.setVisibility(m==2?View.VISIBLE:View.GONE);
+
+        if(m==2){
+            Bitmap flat=drawView.getResultBitmap();
+            cropView.setImage(flat);
+            cropView.setVisibility(View.VISIBLE);
+            drawView.setVisibility(View.GONE);
+            for(int i=0;i<6;i++) styleChip(ratioChips[i],i==0);
+            zoomLabel.setText("100%");
+        }else{
+            cropView.setVisibility(View.GONE);
+            drawView.setVisibility(View.VISIBLE);
+            drawView.setMosaicMode(m==1);
+            if(m==1){ drawView.setMosaicEffect(curEffect); drawView.setMosaicRect(curRect); }
+        }
+        for(int i=0;i<3;i++) styleMode(i,i==m);
+    }
+
+    private void addMode(LinearLayout bar,int icon,String label,int index){
+        LinearLayout item=new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+        ImageView circle=new ImageView(this);
+        circle.setImageResource(icon);
+        GradientDrawable bg=new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        bg.setColor(0x24FFFFFF);
+        circle.setBackground(bg);
+        circle.setPadding(dp(12),dp(12),dp(12),dp(12));
+        modeCircles[index]=circle;
+        item.addView(circle,new LinearLayout.LayoutParams(dp(48),dp(48)));
+        TextView tv=new TextView(this);
+        tv.setText(label); tv.setTextColor(0xCCFFFFFF);
+        tv.setTextSize(12); tv.setGravity(Gravity.CENTER);
+        tv.setPadding(0,dp(4),0,0);
+        modeLabels[index]=tv;
+        item.addView(tv);
+        bar.addView(item,new LinearLayout.LayoutParams(0,-2,1));
+        item.setOnClickListener(v->selectMode(index));
+    }
+
+    private void styleMode(int i,boolean sel){
+        GradientDrawable bg=new GradientDrawable();
+        bg.setShape(GradientDrawable.OVAL);
+        ImageView c=modeCircles[i];
+        if(sel){bg.setColor(0xFFFFFFFF);c.setColorFilter(0xFF000000);modeLabels[i].setTextColor(0xFFFFFFFF);}
+        else{bg.setColor(0x24FFFFFF);c.setColorFilter(0xFFFFFFFF);modeLabels[i].setTextColor(0xCCFFFFFF);}
+        c.setBackground(bg);
     }
 
     private void selectPen(int idx){
@@ -176,30 +388,9 @@ public class EditorActivity extends Activity {
         d.show();
     }
 
-    private void addFunc(LinearLayout bar,int icon,String label,int index){
-        LinearLayout item=new LinearLayout(this);
-        item.setOrientation(LinearLayout.VERTICAL);
-        item.setGravity(Gravity.CENTER);
-        ImageView circle=new ImageView(this);
-        circle.setImageResource(icon);
-        GradientDrawable bg=new GradientDrawable();
-        bg.setShape(GradientDrawable.OVAL);
-        boolean sel=index==selectedFunc;
-        if(sel){bg.setColor(0xFFFFFFFF);circle.setColorFilter(0xFF000000);}
-        else{bg.setColor(0x24FFFFFF);circle.setColorFilter(0xFFFFFFFF);}
-        circle.setBackground(bg);
-        circle.setPadding(dp(12),dp(12),dp(12),dp(12));
-        item.addView(circle,new LinearLayout.LayoutParams(dp(48),dp(48)));
-        TextView tv=new TextView(this);
-        tv.setText(label); tv.setTextColor(sel?0xFFFFFFFF:0xCCFFFFFF);
-        tv.setTextSize(12); tv.setGravity(Gravity.CENTER);
-        tv.setPadding(0,dp(4),0,0);
-        item.addView(tv);
-        bar.addView(item,new LinearLayout.LayoutParams(0,-2,1));
-        item.setOnClickListener(v->{
-            if(index==0)return;
-            Toast.makeText(this,label+" 开发中",Toast.LENGTH_SHORT).show();
-        });
+    private void topConfirm(){
+        if(mode==2) applyCrop();
+        else save();
     }
 
     private void topIcon(LinearLayout bar,int icon,View.OnClickListener l){
@@ -207,6 +398,34 @@ public class EditorActivity extends Activity {
         iv.setImageResource(icon); iv.setPadding(dp(11),dp(11),dp(11),dp(11));
         iv.setOnClickListener(l);
         bar.addView(iv,new LinearLayout.LayoutParams(dp(46),dp(46)));
+    }
+
+    // ================= 通用控件 =================
+    private TextView chip(String text,boolean selected,View.OnClickListener l){
+        TextView t=new TextView(this);
+        t.setText(text); t.setTextSize(13); t.setGravity(Gravity.CENTER);
+        t.setPadding(dp(14),dp(7),dp(14),dp(7));
+        t.setOnClickListener(l);
+        styleChip(t,selected);
+        return t;
+    }
+    private void styleChip(TextView t,boolean sel){
+        GradientDrawable g=new GradientDrawable();
+        g.setCornerRadius(dp(20));
+        if(sel){g.setColor(0xFFFFFFFF);t.setTextColor(0xFF000000);}
+        else{g.setColor(0x26FFFFFF);t.setTextColor(0xFFFFFFFF);g.setStroke(dp(1),0x55FFFFFF);}
+        t.setBackground(g);
+    }
+    private LinearLayout.LayoutParams chipLp(){
+        LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,-2);
+        lp.setMargins(dp(5),dp(4),dp(5),dp(4));
+        return lp;
+    }
+    private TextView label(String text){
+        TextView t=new TextView(this);
+        t.setText(text); t.setTextColor(0xAAFFFFFF); t.setTextSize(12);
+        t.setPadding(dp(10),dp(6),dp(10),dp(2));
+        return t;
     }
 
     private void save(){
