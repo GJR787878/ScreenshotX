@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.text.SimpleDateFormat;
@@ -144,22 +145,55 @@ public class HookLogic {
     }
 
     private static void fire() {
-        Context c = sysContext;
-        if (c == null) c = resolveSystemContext();
-        if (c == null) {
-            log("fire skipped, no context");
-            return;
-        }
-        sysContext = c;
+        // 后台线程执行，避免阻塞 system_server 主线程
+        new Thread(() -> {
+            // 主路径：system_server 内直接用 Root 抓拍并启动编辑器，
+            // 不依赖拉起 App 进程，开机即可无感触发。
+            if (rootShotDirect()) return;
+
+            // 兜底：拉起 App 服务（App 已打开/Root 已授权时可靠）
+            Context c = sysContext;
+            if (c == null) c = resolveSystemContext();
+            if (c == null) {
+                log("fire skipped, no context");
+                return;
+            }
+            sysContext = c;
+            try {
+                Intent svc = new Intent();
+                svc.setClassName("io.github.gjr787878.screenshotx",
+                        "io.github.gjr787878.screenshotx.ScreenshotService");
+                svc.setAction(ScreenshotService.ACTION_SHOOT);
+                c.startService(svc);
+                log("fire sent (service fallback)");
+            } catch (Throwable t) {
+                log("fire failed: " + t);
+            }
+        }).start();
+    }
+
+    /** 在 system_server 进程内直接执行 su：screencap 抓拍并以 root shell 启动编辑器。 */
+    private static boolean rootShotDirect() {
+        final String shot = "/data/local/tmp/screenshotx_shot.png";
+        Process p = null;
         try {
-            Intent svc = new Intent();
-            svc.setClassName("io.github.gjr787878.screenshotx",
-                    "io.github.gjr787878.screenshotx.ScreenshotService");
-            svc.setAction(ScreenshotService.ACTION_SHOOT);
-            c.startService(svc);
-            log("fire sent");
+            p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes("rm -f " + shot + "\n");
+            os.writeBytes("screencap -p " + shot + "\n");
+            os.writeBytes("chmod 666 " + shot + "\n");
+            os.writeBytes("am start -n io.github.gjr787878.screenshotx/.EditorActivity"
+                    + " --es path " + shot + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            p.waitFor();
+            log("direct root shot done");
+            return true;
         } catch (Throwable t) {
-            log("fire failed: " + t);
+            log("direct root shot failed: " + t);
+            return false;
+        } finally {
+            if (p != null) p.destroy();
         }
     }
 }
