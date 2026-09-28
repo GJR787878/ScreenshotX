@@ -8,6 +8,7 @@ import android.os.Looper;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileWriter;
+import java.io.InputStream;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -29,6 +30,10 @@ public class HookLogic {
     private static volatile boolean installed = false;
     private static final Set<Class<?>> hookedHelperClasses =
             new java.util.concurrent.CopyOnWriteArraySet<>();
+
+    // system_server 内常驻的 Root shell，省去每次触发冷启动 su
+    private static Process rootShellProc;
+    private static DataOutputStream rootShellOs;
 
     public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
@@ -103,6 +108,9 @@ public class HookLogic {
             log("ScreenshotHelper hook failed: " + t);
         }
 
+        // 开机后尽力预建常驻 Root shell（已授权则静默成功，首次触发即快）
+        new Thread(HookLogic::ensureDirectShell).start();
+
         installed = true;
         log("install: hooking done");
     }
@@ -147,9 +155,8 @@ public class HookLogic {
     private static void fire() {
         // 后台线程执行，避免阻塞 system_server 主线程
         new Thread(() -> {
-            // 主路径：system_server 内直接用 Root 抓拍并启动编辑器，
-            // 不依赖拉起 App 进程，开机即可无感触发。
-            if (rootShotDirect()) return;
+            // 主路径：常驻 Root shell 抓拍，后台并发预热 App 进程，开机即快
+            if (rootShotPersistent()) return;
 
             // 兜底：拉起 App 服务（App 已打开/Root 已授权时可靠）
             Context c = sysContext;
@@ -172,28 +179,61 @@ public class HookLogic {
         }).start();
     }
 
-    /** 在 system_server 进程内直接执行 su：screencap 抓拍并以 root shell 启动编辑器。 */
-    private static boolean rootShotDirect() {
-        final String shot = "/data/local/tmp/screenshotx_shot.png";
-        Process p = null;
+    private static void drainStatic(InputStream is) {
+        new Thread(() -> {
+            try {
+                byte[] b = new byte[1024];
+                while (is.read(b) > 0) { }
+            } catch (Throwable ignored) { }
+        }).start();
+    }
+
+    /** 建立（或复用）system_server 内常驻的 Root shell。 */
+    private static synchronized boolean ensureDirectShell() {
+        if (rootShellProc != null && rootShellOs != null) return true;
         try {
-            p = Runtime.getRuntime().exec("su");
-            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            rootShellProc = Runtime.getRuntime().exec("su");
+            rootShellOs = new DataOutputStream(rootShellProc.getOutputStream());
+            drainStatic(rootShellProc.getInputStream());
+            drainStatic(rootShellProc.getErrorStream());
+            return true;
+        } catch (Throwable t) {
+            rootShellProc = null;
+            rootShellOs = null;
+            return false;
+        }
+    }
+
+    /** 通过常驻 Root shell 抓拍：后台并发预热 App 进程，抓拍完再启动编辑器（进程已就绪）。 */
+    private static boolean rootShotPersistent() {
+        final String shot = "/data/local/tmp/screenshotx_shot.png";
+        if (!ensureDirectShell()) {
+            log("direct shell unavailable");
+            return false;
+        }
+        try {
+            DataOutputStream os;
+            synchronized (HookLogic.class) {
+                os = rootShellOs;
+            }
+            if (os == null) return false;
+            // 后台预热 App 进程（无界面），与抓拍并发，缩短随后编辑器冷启动
+            os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService &\n");
             os.writeBytes("rm -f " + shot + "\n");
             os.writeBytes("screencap -p " + shot + "\n");
             os.writeBytes("chmod 666 " + shot + "\n");
             os.writeBytes("am start -n io.github.gjr787878.screenshotx/.EditorActivity"
                     + " --es path " + shot + "\n");
-            os.writeBytes("exit\n");
             os.flush();
-            p.waitFor();
-            log("direct root shot done");
+            log("direct shell shot dispatched");
             return true;
         } catch (Throwable t) {
-            log("direct root shot failed: " + t);
+            log("direct shell shot failed: " + t);
+            synchronized (HookLogic.class) {
+                rootShellProc = null;
+                rootShellOs = null;
+            }
             return false;
-        } finally {
-            if (p != null) p.destroy();
         }
     }
 }
