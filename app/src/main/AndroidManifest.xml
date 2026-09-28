@@ -26,6 +26,7 @@
 
         <service
             android:name=".ScreenshotService"
-            android:exported="false" />
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 </manifest>

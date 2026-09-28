@@ -26,6 +26,8 @@ public class HookLogic {
     private static final Handler OWN = new Handler(Looper.getMainLooper());
     private static boolean logInited = false;
     private static volatile boolean installed = false;
+    private static final Set<Class<?>> hookedHelperClasses =
+            new java.util.concurrent.CopyOnWriteArraySet<>();
 
     public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
@@ -81,52 +83,47 @@ public class HookLogic {
             log("init hook failed: " + t);
         }
 
-        // 触发点：保留系统延迟窗口（不锁屏），自己延迟相同时长后 fire
-        try {
-            Set<?> r = XposedBridge.hookAllMethods(pwm, "interceptScreenshotChord",
-                    new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    long now = System.currentTimeMillis();
-                    if (now - lastTrigger < 1500) {
-                        log("chord debounced");
-                        return;
-                    }
-                    lastTrigger = now;
-                    long delay = 0;
-                    if (p.args.length >= 2 && p.args[1] instanceof Long) {
-                        delay = (Long) p.args[1];
-                    }
-                    log("chord HIT, delay=" + delay + ", args=" + p.args.length);
-                    OWN.postDelayed(HookLogic::fire, Math.max(0, delay));
-                }
-            });
-            log("interceptScreenshotChord hooks=" + r.size());
-        } catch (Throwable t) {
-            log("interceptScreenshotChord hook failed: " + t);
-        }
-
-        // 取消系统截屏最终出口
+        // 触发点改为所有截屏的必经出口 ScreenshotHelper.takeScreenshot：
+        // 直接取消系统截屏、改走自有 root screencap，不依赖各 ROM 的组合键方法名。
         try {
             Class<?> sh = XposedHelpers.findClass(
                     "com.android.internal.util.ScreenshotHelper", cl);
-            XC_MethodHook block = new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (System.currentTimeMillis() - lastTrigger < 3000) {
-                        p.setResult(null);
-                        log("blocked ScreenshotHelper " + p.method.getName());
-                    }
+            hookScreenshotHelper(sh);
+
+            // 兼容 MIUI/HyperOS 等用子类重写：实例构造后按运行时真实类补 hook
+            XposedBridge.hookAllConstructors(sh, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Class<?> runtime = p.thisObject.getClass();
+                    if (runtime != sh) hookScreenshotHelper(runtime);
                 }
-            };
-            Set<?> r1 = XposedBridge.hookAllMethods(sh, "takeScreenshot", block);
-            Set<?> r2 = XposedBridge.hookAllMethods(sh, "takeScreenshotInternal", block);
-            log("ScreenshotHelper takeScreenshot=" + r1.size()
-                    + " takeScreenshotInternal=" + r2.size());
+            });
+            log("ScreenshotHelper ctor hooked");
         } catch (Throwable t) {
             log("ScreenshotHelper hook failed: " + t);
         }
 
         installed = true;
         log("install: hooking done");
+    }
+
+    /** 在指定类（基类或 ROM 子类）上 hook 截屏入口：取消系统截屏并触发自有抓拍。 */
+    private static void hookScreenshotHelper(Class<?> cls) {
+        if (!hookedHelperClasses.add(cls)) return;
+        XC_MethodHook replace = new XC_MethodHook() {
+            @Override protected void beforeHookedMethod(MethodHookParam p) {
+                long now = System.currentTimeMillis();
+                boolean fire = (now - lastTrigger) > 1500;
+                lastTrigger = now;
+                p.setResult(null); // 取消系统截屏
+                log("intercepted " + p.method.getDeclaringClass().getSimpleName()
+                        + "." + p.method.getName() + " fire=" + fire);
+                if (fire) OWN.postDelayed(HookLogic::fire, 400);
+            }
+        };
+        Set<?> a = XposedBridge.hookAllMethods(cls, "takeScreenshot", replace);
+        Set<?> b = XposedBridge.hookAllMethods(cls, "takeScreenshotInternal", replace);
+        log("hook ScreenshotHelper on " + cls.getName()
+                + " takeScreenshot=" + a.size() + " takeScreenshotInternal=" + b.size());
     }
 
     /** 兜底获取系统 Context：system_server 内通过 ActivityThread.getSystemContext()，不依赖 init hook 时机。 */
