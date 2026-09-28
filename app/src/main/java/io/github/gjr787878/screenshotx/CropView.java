@@ -202,29 +202,32 @@ public class CropView extends View {
                 case 7: l=x; break;
             }
         }else{
-            float ax,ay;
-            if(mode==0){ax=r;ay=b;} else if(mode==1){ax=l;ay=b;}
-            else if(mode==2){ax=l;ay=t;} else if(mode==3){ax=r;ay=t;}
-            else {ax=crop.centerX();ay=crop.centerY();}
-            float w=Math.abs(x-ax),h=Math.abs(y-ay);
-            if(mode>=4){
-                if(mode==4||mode==6){ h=Math.abs(y-ay); w=h*ratio; }
-                else { w=Math.abs(x-ax); h=w/ratio; }
-            }else{
+            float cx=crop.centerX(), cy=crop.centerY();
+            if(mode<4){
+                // 角：以对角为锚点，按比例约束后从锚点向手指方向展开
+                float ax,ay;
+                if(mode==0){ax=r;ay=b;} else if(mode==1){ax=l;ay=b;}
+                else if(mode==2){ax=l;ay=t;} else {ax=r;ay=t;}
+                float w=Math.abs(x-ax),h=Math.abs(y-ay);
                 if(w/h>ratio) w=h*ratio; else h=w/ratio;
-            }
-            float nl,nr,nt,nb;
-            boolean left =x<ax, top=y<ay;
-            if(mode>=4){
-                nl=crop.centerX()-w/2; nr=crop.centerX()+w/2;
-                nt=crop.centerY()-h/2; nb=crop.centerY()+h/2;
-                if(mode==4) nt=ay-h; else if(mode==6) nb=ay+h;
-                if(mode==5) nr=ax+w; else if(mode==7) nl=ax-w;
+                boolean left=x<ax, top=y<ay;
+                l=left?ax-w:ax; r=left?ax:ax+w;
+                t=top?ay-h:ay; b=top?ay:ay+h;
+            }else if(mode==4||mode==6){
+                // 上下边：对边固定，由高度推导宽度，水平中心不变
+                float h;
+                if(mode==4){ t=Math.min(y,b-dp(30)); h=b-t; }
+                else { b=Math.max(y,t+dp(30)); h=b-t; }
+                float w=h*ratio;
+                l=cx-w/2; r=cx+w/2;
             }else{
-                nl=left?ax-w:ax; nr=left?ax:ax+w;
-                nt=top?ay-h:ay; nb=top?ay:ay+h;
+                // 左右边：对边固定，由宽度推导高度，垂直中心不变
+                float w;
+                if(mode==5){ r=Math.max(x,l+dp(30)); w=r-l; }
+                else { l=Math.min(x,r-dp(30)); w=r-l; }
+                float h=w/ratio;
+                t=cy-h/2; b=cy+h/2;
             }
-            l=nl;t=nt;r=nr;b=nb;
         }
         if(r-l<dp(30)){ float c=(l+r)/2;l=c-dp(15);r=c+dp(15);}
         if(b-t<dp(30)){ float c=(t+b)/2;t=c-dp(15);b=c+dp(15);}
@@ -256,6 +259,7 @@ public class CropView extends View {
         float ir=il+img.getWidth()*dispScale(),ib=it+img.getHeight()*dispScale();
         float l=Math.max(crop.left,il), t=Math.max(crop.top,it);
         float r=Math.min(crop.right,ir), b=Math.min(crop.bottom,ib);
+        if(r-l<=0||b-t<=0){ initDefault(); return; } // 退化保护：避免框坍缩导致图片飞出
         if(ratio>0){
             float w=r-l,h=b-t;
             if(w/h>ratio){ float nw=h*ratio; float cx=(l+r)/2; l=cx-nw/2;r=cx+nw/2; }
