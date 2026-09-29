@@ -90,7 +90,7 @@ public class RecordService extends Service {
         try {
             if (recordOs != null) {
                 // 发送 Ctrl+C 结束 screenrecord
-                recordOs.writeBytes("\x03");
+                recordOs.write(3); // Ctrl+C 结束 screenrecord
                 recordOs.flush();
             }
             if (recordProc != null) {
