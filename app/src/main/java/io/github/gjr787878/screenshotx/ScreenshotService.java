@@ -27,7 +27,9 @@ public class ScreenshotService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
-        // 预热：不请求 root，仅让进程存活
+        // App 进程一创建就建 root shell（开机/首次拉起时弹一次 Magisk 授权，后续复用）；
+        // system_server 常驻 shell 不可用时，本服务就是兜底抓拍路径，必须有 root。
+        new Thread(this::ensureRoot).start();
     }
 
     @Override
