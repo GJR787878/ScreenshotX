@@ -21,7 +21,7 @@ public class GestureWatcher {
 
     private static final int MAX_PTR = 10;
     private static final int NONE = Integer.MIN_VALUE;
-    private static final long COOLDOWN = 1500L;
+    private static final long COOLDOWN = 300L;
 
     private static GestureWatcher INSTANCE;
 
