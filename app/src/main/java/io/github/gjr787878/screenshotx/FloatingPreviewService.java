@@ -211,29 +211,32 @@ public class FloatingPreviewService extends Service {
         }).start();
     }
 
-    /** 超时：后台保存相册（与渐出并行），同时播放 0.4s 渐出，结束后按代际移除悬浮图。 */
+    /** 超时：先播放 0.4s 渐出（总停留 2.4 秒），渐出结束后再保存相册并移除悬浮图。 */
     private void saveAndFadeOut(final String path, final int g) {
-        new Thread(() -> {
-            boolean ok = false;
-            try {
-                MediaSaver.saveToGallery(FloatingPreviewService.this, path);
-                ok = true;
-            } catch (Throwable t) {
-                ok = false;
-            }
-            final boolean saved = ok;
-            main.post(() -> Toast.makeText(FloatingPreviewService.this,
-                    saved ? "已保存到相册" : "自动保存失败", Toast.LENGTH_SHORT).show());
-        }).start();
-        // 0.4 秒渐出：总停留 2 + 0.4 秒
-        if (root == null) return;
+        if (root == null) { saveAndFinish(path, g); return; }
         root.animate().cancel();
         root.animate().alpha(0f).setDuration(FADE_OUT)
                 .setListener(new AnimatorListenerAdapter() {
                     @Override public void onAnimationEnd(Animator a) {
                         if (g != gen) return; // 已被新预览接管，旧视图已移除，不拆新视图
+                        // 2.4 秒后：先移除视图，再后台保存到相册
                         teardownView();
-                        stopSelf();
+                        new Thread(() -> {
+                            boolean ok = false;
+                            try {
+                                MediaSaver.saveToGallery(FloatingPreviewService.this, path);
+                                ok = true;
+                            } catch (Throwable t) {
+                                ok = false;
+                            }
+                            final boolean saved = ok;
+                            main.post(() -> {
+                                Toast.makeText(FloatingPreviewService.this,
+                                        saved ? "已保存到相册" : "自动保存失败",
+                                        Toast.LENGTH_SHORT).show();
+                                stopSelf();
+                            });
+                        }).start();
                     }
                 }).start();
     }
