@@ -11,6 +11,7 @@ import android.os.SharedMemory;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.system.OsConstants;
+import android.view.MotionEvent;
 
 import java.io.DataOutputStream;
 import java.io.File;
@@ -19,6 +20,7 @@ import java.io.InputStream;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
 import java.util.Set;
@@ -44,9 +46,6 @@ public class HookLogic {
     // system_server 内常驻的 Root shell，省去每次触发冷启动 su
     private static Process rootShellProc;
     private static DataOutputStream rootShellOs;
-
-    // §触发反馈：短震动，system_server(uid=system) 自带 VIBRATE 权限
-    private static Vibrator vibrator;
 
     public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
@@ -102,6 +101,25 @@ public class HookLogic {
             log("init hooks=" + r.size());
         } catch (Throwable t) {
             log("init hook failed: " + t);
+        }
+
+        // 三指手势事件源：hook 全局 MotionEvent 入队前回调（每个 DOWN/MOVE/UP 都经过，
+        // 在 system_server 内稳定运行），无需反射自建 InputChannel/InputEventReceiver。
+        try {
+            XposedBridge.hookAllMethods(pwm, "interceptMotionBeforeQueueing",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    for (Object a : p.args) {
+                        if (a instanceof MotionEvent) {
+                            GestureWatcher.dispatch((MotionEvent) a);
+                            break;
+                        }
+                    }
+                }
+            });
+            log("interceptMotionBeforeQueueing hooked");
+        } catch (Throwable t) {
+            log("motion hook failed: " + t);
         }
 
         // 按键截屏：hook ScreenshotHelper.takeScreenshot，受“按键截屏”开关控制
@@ -169,9 +187,11 @@ public class HookLogic {
     /** 触发截图后立刻短震动反馈（40ms）。system_server 为 system uid，自带 VIBRATE 权限。 */
     public static void vibrate(Context c) {
         try {
-            if (vibrator == null) vibrator = c.getSystemService(Vibrator.class);
-            if (vibrator != null && vibrator.hasVibrator()) {
-                vibrator.vibrate(VibrationEffect.createOneShot(
+            Context use = sysContext != null ? sysContext : c; // 统一用确定可用的系统 Context
+            if (use == null) return;
+            Vibrator v = use.getSystemService(Vibrator.class); // 每次获取，避免缓存到坏实例
+            if (v != null && v.hasVibrator()) {
+                v.vibrate(VibrationEffect.createOneShot(
                         40L, VibrationEffect.DEFAULT_AMPLITUDE));
             }
         } catch (Throwable t) {
@@ -227,25 +247,80 @@ public class HookLogic {
         }
     }
 
+    /**
+     * 枚举 SurfaceControl 所有名为 screenshot 的静态方法，按参数类型启发式构造实参并依次尝试，
+     * 任何一个返回非空 Bitmap 即采用。自适应不同 Android 版本 / ROM 的签名差异
+     * （旧固定签名在 Android 14 crDroid 上已全部 NoSuchMethod）。
+     */
     private static Bitmap tryScreenshot(Class<?> sc, int w, int h) {
-        try {
-            Method m = sc.getDeclaredMethod("screenshot", int.class, int.class);
-            Bitmap b = (Bitmap) m.invoke(null, w, h);
-            if (b != null) return b;
-        } catch (Throwable ignored) {}
-        try {
-            Method m = sc.getDeclaredMethod("screenshot",
-                    Rect.class, int.class, int.class, boolean.class, int.class);
-            Bitmap b = (Bitmap) m.invoke(null, new Rect(0, 0, w, h), w, h, false, 0);
-            if (b != null) return b;
-        } catch (Throwable ignored) {}
-        try {
-            Method m = sc.getDeclaredMethod("screenshot",
-                    Rect.class, int.class, int.class, int.class);
-            Bitmap b = (Bitmap) m.invoke(null, new Rect(0, 0, w, h), w, h, 0);
-            if (b != null) return b;
-        } catch (Throwable ignored) {}
+        Method[] all;
+        try { all = sc.getDeclaredMethods(); } catch (Throwable t) { return null; }
+        java.util.List<String> seen = new java.util.ArrayList<>();
+        for (Method m : all) {
+            if (!"screenshot".equals(m.getName())) continue;
+            Class<?> rt = m.getReturnType();
+            boolean retBitmap = rt == Bitmap.class;
+            boolean retShb = rt.getName().contains("ScreenshotHardwareBuffer");
+            if (!retBitmap && !retShb) continue;
+            seen.add(rt.getSimpleName() + Arrays.toString(m.getParameterTypes()));
+            Object out;
+            try {
+                Object[] args = buildScreenshotArgs(m.getParameterTypes(), w, h);
+                if (args == null) continue; // 含无法安全构造的参数（DisplayCaptureArgs/IBinder 等）
+                out = m.invoke(null, args);
+            } catch (Throwable t) {
+                continue;
+            }
+            if (out == null) continue;
+            Bitmap bmp;
+            if (retBitmap) {
+                bmp = (Bitmap) out;
+            } else {
+                try {
+                    Method asBmp = out.getClass().getMethod("asBitmap");
+                    bmp = (Bitmap) asBmp.invoke(out);
+                } catch (Throwable t) { continue; }
+            }
+            bmp = toSoftwareBitmap(bmp);
+            if (bmp != null) {
+                log("surface shot via " + rt.getSimpleName()
+                        + ".screenshot" + Arrays.toString(m.getParameterTypes()));
+                return bmp;
+            }
+        }
+        if (!seen.isEmpty()) log("screenshot signatures seen: " + seen);
         return null;
+    }
+
+    /** 按参数类型启发式构造实参；int 依次取 width,height,0,0…；无法构造则返回 null。 */
+    private static Object[] buildScreenshotArgs(Class<?>[] pts, int w, int h) {
+        Object[] args = new Object[pts.length];
+        int[] intQueue = { w, h, 0, 0, 0, 0 };
+        int intIdx = 0;
+        for (int i = 0; i < pts.length; i++) {
+            Class<?> t = pts[i];
+            if (t == Rect.class) args[i] = new Rect(0, 0, w, h);
+            else if (t == int.class) args[i] = intIdx < intQueue.length ? intQueue[intIdx++] : 0;
+            else if (t == boolean.class) args[i] = Boolean.FALSE;
+            else if (t == long.class) args[i] = 0L;
+            else if (t == float.class) args[i] = 0f;
+            else return null;
+        }
+        return args;
+    }
+
+    /** SurfaceControl 可能返回 HARDWARE bitmap（无法 copyPixelsToBuffer），统一转成 ARGB_8888。 */
+    private static Bitmap toSoftwareBitmap(Bitmap bmp) {
+        if (bmp == null) return null;
+        try {
+            if (bmp.getConfig() == Bitmap.Config.HARDWARE || !bmp.isSoftware()) {
+                Bitmap sw = bmp.copy(Bitmap.Config.ARGB_8888, false);
+                if (sw != null) return sw;
+            }
+        } catch (Throwable t) {
+            try { return bmp.copy(Bitmap.Config.ARGB_8888, false); } catch (Throwable ignored) {}
+        }
+        return bmp;
     }
 
     /** 把 Bitmap 放入共享内存（ashmem，无 Binder 大小限制），启动 App 悬浮预览。 */
