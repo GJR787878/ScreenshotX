@@ -34,13 +34,14 @@ public class ScreenshotService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int id) {
-        // 仅显式兜底抓拍才建立 root；普通预热不 exec su
         if (intent != null && ACTION_SHOOT.equals(intent.getAction())) {
             new Thread(this::shoot).start();
+        } else {
+            // 预热：确保 root shell 存在并保持进程常驻，后续截图复用不再弹 Magisk 通知
+            new Thread(this::ensureRoot).start();
         }
-        // START_NOT_STICKY：进程被杀后不自动带空 intent 重启，避免重启/崩溃循环；
-        // 下次截图时 system_server 的 hook 会重新拉起本服务。
-        return START_NOT_STICKY;
+        // START_STICKY：保持服务常驻，root shell 不释放，避免每次截图重建进程重复 exec su
+        return START_STICKY;
     }
 
     private synchronized boolean ensureRoot() {
