@@ -18,4 +18,27 @@
     <string name="save_failed">Auto-save failed</string>
     <string name="export_ok">Exported to Download/111.zip</string>
     <string name="export_fail">Export failed</string>
+    <string name="pen_ball">Ballpoint</string>
+    <string name="pen_marker">Highlighter</string>
+    <string name="pen_pencil">Pencil</string>
+    <string name="pen_fountain">Fountain</string>
+    <string name="pen_eraser">Eraser</string>
+    <string name="share">Share</string>
+    <string name="mode_mark">Markup</string>
+    <string name="mode_mosaic">Mosaic</string>
+    <string name="mode_crop">Crop</string>
+    <string name="width">Width</string>
+    <string name="mos_pixel">Pixel</string>
+    <string name="mos_blur">Blur</string>
+    <string name="mos_black">Black bar</string>
+    <string name="mos_paint">Smudge</string>
+    <string name="mos_rect">Rectangle</string>
+    <string name="ratio">Ratio</string>
+    <string name="ratio_free">Free</string>
+    <string name="cancel">Cancel</string>
+    <string name="apply_crop">Apply crop</string>
+    <string name="cropped">Cropped</string>
+    <string name="saving">Saving…</string>
+    <string name="saved_to">Saved to Pictures/Screenshots</string>
+    <string name="save_fail_prefix">Save failed: </string>
 </resources>
