@@ -11,6 +11,7 @@ import android.os.SharedMemory;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.system.OsConstants;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.WindowManager;
 
@@ -122,6 +123,31 @@ public class HookLogic {
             log("interceptMotionBeforeQueueing hooked");
         } catch (Throwable t) {
             log("motion hook failed: " + t);
+        }
+
+        // 按键事件：hook interceptKeyBeforeQueueing，监听电源键+音量上组合触发录屏，
+        // 以及录屏期间电源键单击结束录屏（不锁屏）。
+        try {
+            XposedBridge.hookAllMethods(pwm, "interceptKeyBeforeQueueing",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        Object keyEv = p.args.length > 0 ? p.args[0] : null;
+                        if (keyEv == null) return;
+                        // 反射获取 keyCode 和 action
+                        Method getKeyCode = keyEv.getClass().getMethod("getKeyCode");
+                        Method getAction = keyEv.getClass().getMethod("getAction");
+                        int keyCode = (int) getKeyCode.invoke(keyEv);
+                        int action = (int) getAction.invoke(keyEv);
+                        KeyInterceptor.onKeyEvent(keyCode, action);
+                    } catch (Throwable t) {
+                        log("key event hook failed: " + t);
+                    }
+                }
+            });
+            log("interceptKeyBeforeQueueing hooked");
+        } catch (Throwable t) {
+            log("key hook failed: " + t);
         }
 
         // 按键截屏：hook ScreenshotHelper.takeScreenshot，受“按键截屏”开关控制
@@ -541,6 +567,45 @@ public class HookLogic {
                 rootShellOs = null;
             }
             return false;
+        }
+        }
+
+    /** 触发录屏（由 KeyInterceptor 调用）。 */
+    public static void startRecording() {
+        Context c = sysContext;
+        if (c == null) c = resolveSystemContext();
+        if (c == null) {
+            log("startRecording skipped, no context");
+            return;
+        }
+        sysContext = c;
+        try {
+            Intent svc = new Intent();
+            svc.setClassName("io.github.gjr787878.screenshotx",
+                    "io.github.gjr787878.screenshotx.RecordService");
+            svc.setAction(RecordService.ACTION_START);
+            c.startForegroundService(svc);
+            log("recording start sent");
+            vibrate(c, 60L, 200);
+        } catch (Throwable t) {
+            log("startRecording failed: " + t);
+        }
+    }
+
+    /** 结束录屏（由 KeyInterceptor 调用）。 */
+    public static void stopRecording() {
+        Context c = sysContext;
+        if (c == null) c = resolveSystemContext();
+        if (c == null) return;
+        try {
+            Intent svc = new Intent();
+            svc.setClassName("io.github.gjr787878.screenshotx",
+                    "io.github.gjr787878.screenshotx.RecordService");
+            svc.setAction(RecordService.ACTION_STOP);
+            c.startService(svc);
+            log("recording stop sent");
+        } catch (Throwable t) {
+            log("stopRecording failed: " + t);
         }
     }
 }
