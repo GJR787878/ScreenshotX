@@ -15,12 +15,17 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import android.content.ContentValues;
+import android.content.Context;
 import android.net.Uri;
 import android.provider.MediaStore;
 
 import java.io.OutputStream;
 
 public class EditorActivity extends Activity {
+
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Lang.wrap(base));
+    }
 
     private DrawView drawView;
     private CropView cropView;
@@ -36,7 +41,6 @@ public class EditorActivity extends Activity {
     private final int[] PEN_RES = {
         R.drawable.ic_pen_ball, R.drawable.ic_pen_marker, R.drawable.ic_pen_pencil,
         R.drawable.ic_pen_fountain, R.drawable.ic_pen_eraser};
-    private final String[] PEN_NAMES = {"圆珠笔","荧光笔","铅笔","钢笔","橡皮擦"};
 
     // 马赛克：单行 5 个按钮（0-2 效果，3-4 方式）
     private final TextView[] mosChips = new TextView[5];
@@ -72,7 +76,7 @@ public class EditorActivity extends Activity {
         topIcon(top,R.drawable.ic_undo,v->drawView.undo());
         topIcon(top,R.drawable.ic_redo,v->drawView.redo());
         top.addView(stretch());
-        topIcon(top,R.drawable.ic_share,v->Toast.makeText(this,"分享",Toast.LENGTH_SHORT).show());
+        topIcon(top,R.drawable.ic_share,v->Toast.makeText(this,R.string.share,Toast.LENGTH_SHORT).show());
         topIcon(top,R.drawable.ic_check,v->topConfirm());
 
         // 中间：DrawView 与 CropView 叠加
@@ -108,9 +112,9 @@ public class EditorActivity extends Activity {
         LinearLayout.LayoutParams flp=new LinearLayout.LayoutParams(-1,dp(86));
         flp.topMargin=dp(4);
         bottom.addView(funcs,flp);
-        addMode(funcs,R.drawable.ic_pen,"标记",0);
-        addMode(funcs,R.drawable.ic_mosaic,"马赛克",1);
-        addMode(funcs,R.drawable.ic_crop,"形状裁剪",2);
+        addMode(funcs,R.drawable.ic_pen,getString(R.string.mode_mark),0);
+        addMode(funcs,R.drawable.ic_mosaic,getString(R.string.mode_mosaic),1);
+        addMode(funcs,R.drawable.ic_crop,getString(R.string.mode_crop),2);
 
         setContentView(root);
         selectMode(0);
@@ -131,13 +135,15 @@ public class EditorActivity extends Activity {
         barLp.setMargins(0,0,0,dp(10));
         panel.addView(penBar,barLp);
 
+        String[] penNames={getString(R.string.pen_ball),getString(R.string.pen_marker),
+                getString(R.string.pen_pencil),getString(R.string.pen_fountain),getString(R.string.pen_eraser)};
         for(int i=0;i<5;i++){
             LinearLayout item=new LinearLayout(this);
             item.setOrientation(LinearLayout.VERTICAL);
             item.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL);
 
             TextView tip=new TextView(this);
-            tip.setText(PEN_NAMES[i]); tip.setTextSize(12);
+            tip.setText(penNames[i]); tip.setTextSize(12);
             tip.setTextColor(0xFFFFFFFF); tip.setGravity(Gravity.CENTER);
             GradientDrawable tb=new GradientDrawable();
             tb.setCornerRadius(dp(10)); tb.setColor(0xFF4A4A50);
@@ -179,7 +185,7 @@ public class EditorActivity extends Activity {
         widthRow.setGravity(Gravity.CENTER_VERTICAL);
         widthRow.setPadding(dp(10),0,dp(10),0);
         TextView wlabel=new TextView(this);
-        wlabel.setText("粗细"); wlabel.setTextColor(0xCCFFFFFF); wlabel.setTextSize(12);
+        wlabel.setText(R.string.width); wlabel.setTextColor(0xCCFFFFFF); wlabel.setTextSize(12);
         widthRow.addView(wlabel,new LinearLayout.LayoutParams(-2,-2));
         android.widget.SeekBar widthSeek=new android.widget.SeekBar(this);
         widthSeek.setMax(570); widthSeek.setProgress(70);
@@ -210,7 +216,7 @@ public class EditorActivity extends Activity {
         // 单行：像素 / 模糊 /黑块 ｜ 涂抹 / 框选
         LinearLayout row=new LinearLayout(this);
         row.setGravity(Gravity.CENTER);
-        String[] names={"像素","模糊","黑块","涂抹","框选"};
+        String[] names={getString(R.string.mos_pixel),getString(R.string.mos_blur),getString(R.string.mos_black),getString(R.string.mos_paint),getString(R.string.mos_rect)};
         for(int i=0;i<5;i++){
             if(i==3){ // 效果与方式之间加一条竖向分隔
                 View d=new View(this);
@@ -256,10 +262,10 @@ public class EditorActivity extends Activity {
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER_VERTICAL);
 
-        panel.addView(label("比例"));
+        panel.addView(label(getString(R.string.ratio)));
         LinearLayout rRow=new LinearLayout(this);
         rRow.setGravity(Gravity.CENTER);
-        String[] rn={"自由","1:1","4:3","3:4","16:9","9:16"};
+        String[] rn={getString(R.string.ratio_free),"1:1","4:3","3:4","16:9","9:16"};
         for(int i=0;i<6;i++){
             final int idx=i;
             ratioChips[i]=chip(rn[i],i==0,v->selectRatio(idx));
@@ -270,8 +276,8 @@ public class EditorActivity extends Activity {
         // 操作行（缩放统一由双指捏合完成，不再提供按钮）
         LinearLayout aRow=new LinearLayout(this);
         aRow.setGravity(Gravity.CENTER);
-        TextView cancel=chip("取消",false,v->cancelCrop());
-        TextView apply=chip("应用裁剪",true,v->applyCrop());
+        TextView cancel=chip(getString(R.string.cancel),false,v->cancelCrop());
+        TextView apply=chip(getString(R.string.apply_crop),true,v->applyCrop());
         LinearLayout.LayoutParams cl=chipLp(); cl.weight=1;
         LinearLayout.LayoutParams al=chipLp(); al.weight=1;
         aRow.addView(cancel,cl);
@@ -294,7 +300,7 @@ public class EditorActivity extends Activity {
         cropView.setVisibility(View.GONE);
         drawView.setVisibility(View.VISIBLE);
         selectMode(0);
-        Toast.makeText(this,"已裁剪",Toast.LENGTH_SHORT).show();
+        Toast.makeText(this,R.string.cropped,Toast.LENGTH_SHORT).show();
     }
     private void cancelCrop(){
         cropView.setVisibility(View.GONE);
@@ -423,7 +429,7 @@ public class EditorActivity extends Activity {
     }
 
     private void save(){
-        Toast.makeText(this,"保存中…",Toast.LENGTH_SHORT).show();
+        Toast.makeText(this,R.string.saving,Toast.LENGTH_SHORT).show();
         new Thread(() -> {
             try{
                 Bitmap result=drawView.getResultBitmap();
@@ -443,11 +449,11 @@ public class EditorActivity extends Activity {
                 values.put(MediaStore.Images.Media.IS_PENDING,0);
                 getContentResolver().update(uri,values,null,null);
                 runOnUiThread(() -> {
-                    Toast.makeText(this,"已保存到 Pictures/Screenshots",Toast.LENGTH_LONG).show();
+                    Toast.makeText(this,R.string.saved_to,Toast.LENGTH_LONG).show();
                     finish();
                 });
             }catch(Exception e){
-                runOnUiThread(() -> Toast.makeText(this,"保存失败: "+e.getMessage(),Toast.LENGTH_SHORT).show());
+                runOnUiThread(() -> Toast.makeText(this,getString(R.string.save_fail_prefix)+e.getMessage(),Toast.LENGTH_SHORT).show());
             }
         }).start();
     }
