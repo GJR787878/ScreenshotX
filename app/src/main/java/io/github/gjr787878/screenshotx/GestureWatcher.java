@@ -4,18 +4,21 @@ import android.content.Context;
 import android.hardware.input.InputManager;
 import android.os.Looper;
 import android.util.DisplayMetrics;
-import android.view.InputChannel;
-import android.view.InputEvent;
-import android.view.InputEventReceiver;
 import android.view.MotionEvent;
 
+import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 
+import de.robv.android.xposed.XC_MethodHook;
+import de.robv.android.xposed.XposedBridge;
+
 /**
  * 三指下滑手势监听：在 system_server 内通过 InputManager.monitorGestureInput
- * 注册一个全局手势监视器（只接收事件副本，不拦截正常输入），
- * 检测到三根手指同时向下滑动即触发截屏。参照 AOSP SystemGesturesPointerEventListener。
+ * 注册全局手势监视器（只接收事件副本，不拦截正常输入），三指同时下滑即截屏。
+ * InputChannel / InputEventReceiver 为隐藏类，全程反射；
+ * 事件回调通过 hook 自建 receiver 的 onInputEvent 取得（只处理自己的实例）。
+ * 参照 AOSP SystemGesturesPointerEventListener。
  */
 public class GestureWatcher {
 
@@ -30,26 +33,32 @@ public class GestureWatcher {
     private final float[] downY = new float[MAX_PTR];
     private long lastFire = 0L;
 
-    /** 在 system_server 内安装全局手势监视器。 */
     public static void install(final Context c) {
         try {
             InputManager im = (InputManager) c.getSystemService(Context.INPUT_SERVICE);
             Method mm = InputManager.class.getMethod(
                     "monitorGestureInput", String.class, int.class);
             Object monitor = mm.invoke(im, "screenshotx-gesture", 0);
-            Method gic = monitor.getClass().getMethod("getInputChannel");
-            InputChannel ch = (InputChannel) gic.invoke(monitor);
+            Object ch = monitor.getClass().getMethod("getInputChannel").invoke(monitor);
 
             final GestureWatcher w = new GestureWatcher(c);
-            new InputEventReceiver(ch, Looper.getMainLooper()) {
-                @Override public void onInputEvent(InputEvent event) {
-                    try {
-                        if (event instanceof MotionEvent) w.onMotion((MotionEvent) event);
-                    } finally {
-                        finishInputEvent(event, false);
-                    }
+
+            // 反射创建 InputEventReceiver(InputChannel, Looper)
+            Class<?> icClass = Class.forName("android.view.InputChannel");
+            Class<?> ierClass = Class.forName("android.view.InputEventReceiver");
+            Class<?> ieClass = Class.forName("android.view.InputEvent");
+            Constructor<?> ctor = ierClass.getDeclaredConstructor(icClass, Looper.class);
+            final Object receiver = ctor.newInstance(ch, Looper.getMainLooper());
+
+            // hook onInputEvent，仅处理自建实例；默认实现随后 finishInputEvent(false)
+            Method onInputEvent = ierClass.getMethod("onInputEvent", ieClass);
+            XposedBridge.hookMethod(onInputEvent, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.thisObject != receiver) return;
+                    Object e = p.args[0];
+                    if (e instanceof MotionEvent) w.onMotion((MotionEvent) e);
                 }
-            };
+            });
             HookLogic.log("gesture watcher installed");
         } catch (Throwable t) {
             HookLogic.log("gesture watcher failed: " + t);
@@ -60,12 +69,11 @@ public class GestureWatcher {
         ctx = c;
         DisplayMetrics dm = new DisplayMetrics();
         c.getDisplay().getRealMetrics(dm);
-        threshold = dm.heightPixels * 0.08f; // 下滑超过屏高 8%
+        threshold = dm.heightPixels * 0.08f;
         Arrays.fill(downId, NONE);
     }
 
     private void onMotion(MotionEvent ev) {
-        // 开关关闭：不检测，同时清空落点避免脏数据
         if (!Prefs.threeFinger(ctx)) { Arrays.fill(downId, NONE); return; }
         switch (ev.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
