@@ -125,6 +125,16 @@ public class FloatingPreviewService extends Service {
             // 无悬浮权限：后台落盘后打开编辑器兜底
             new Thread(() -> {
                 File f = persist(bmp, g);
+                if (f != null) {
+                    // 只有 gen 匹配时才更新 currentPath，避免旧线程覆盖新路径
+                    synchronized (this) { if (g == gen) currentPath = f.getAbsolutePath(); }
+                }
+                synchronized (fileLock) {
+                    if (g == gen) {
+                        fileReady = true;
+                        fileLock.notifyAll();
+                    }
+                }
                 if (f != null) openEditor(f.getAbsolutePath());
                 stopSelf();
             }).start();
@@ -136,10 +146,15 @@ public class FloatingPreviewService extends Service {
         // 后台压缩落盘，完成后通知保存/编辑路径
         new Thread(() -> {
             File f = persist(bmp, g);
-            if (f != null) currentPath = f.getAbsolutePath();
+            if (f != null) {
+                // 只有 gen 匹配时才更新 currentPath，避免旧 persist 线程覆盖新路径
+                synchronized (this) { if (g == gen) currentPath = f.getAbsolutePath(); }
+            }
             synchronized (fileLock) {
-                fileReady = true;
-                fileLock.notifyAll();
+                if (g == gen) {
+                    fileReady = true;
+                    fileLock.notifyAll();
+                }
             }
         }).start();
     }
@@ -175,6 +190,15 @@ public class FloatingPreviewService extends Service {
             final Bitmap tb = thumb;
             new Thread(() -> {
                 File f = persist(tb, g);
+                if (f != null) {
+                    synchronized (this) { if (g == gen) currentPath = f.getAbsolutePath(); }
+                }
+                synchronized (fileLock) {
+                    if (g == gen) {
+                        fileReady = true;
+                        fileLock.notifyAll();
+                    }
+                }
                 if (f != null) openEditor(f.getAbsolutePath());
                 stopSelf();
             }).start();
@@ -271,8 +295,9 @@ public class FloatingPreviewService extends Service {
     /** 正常超时：0.4 秒渐出，结束后等文件就绪再保存相册。 */
     private void saveAndFadeOut(final int g) {
         if (root == null) { saveAndFinish(currentPath, g); return; }
-        root.animate().cancel();
-        root.animate().alpha(0f).setDuration(FADE_OUT)
+        final View fadeView = root;
+        fadeView.animate().cancel();
+        fadeView.animate().alpha(0f).setDuration(FADE_OUT)
                 .setListener(new AnimatorListenerAdapter() {
                     @Override public void onAnimationEnd(Animator a) {
                         if (g != gen) return;
@@ -359,11 +384,18 @@ public class FloatingPreviewService extends Service {
     }
 
     private void teardownView() {
-        if (animator != null) { animator.cancel(); animator = null; }
+        // 关键修复：先置 finished=true，确保 animator.cancel() 触发的 onAnimationEnd
+        // 中 if (finished) return; 直接返回，不会误调用 saveAndFadeOut 造成浮窗残留
+        finished = true;
+        if (animator != null) {
+            animator.cancel();
+            animator = null;
+        }
         if (root != null) {
-            root.animate().cancel();
-            try { wm.removeView(root); } catch (Throwable ignored) {}
+            final View old = root;
             root = null;
+            old.animate().cancel();
+            try { wm.removeView(old); } catch (Throwable ignored) {}
         }
     }
 
