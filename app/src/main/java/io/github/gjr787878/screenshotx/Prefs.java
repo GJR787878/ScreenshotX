@@ -12,6 +12,7 @@ import java.io.DataOutputStream;
 public class Prefs {
     public static final String K_KEYS = "screenshotx_keys";        // 按键截屏
     public static final String K_THREE = "screenshotx_threefinger";// 三指下滑
+    public static final String K_DRM = "screenshotx_drm";          // 截取受保护/DRM 内容
     public static final String K_LANG = "screenshotx_lang";        // zh / en / ru
 
     public static boolean keys(Context c) {
@@ -21,6 +22,12 @@ public class Prefs {
 
     public static boolean threeFinger(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_THREE, 0) == 1; }
+        catch (Throwable t) { return false; }
+    }
+
+    /** 截取受保护 / DRM 内容（绕过 FLAG_SECURE 黑屏）。默认关闭。 */
+    public static boolean drmCapture(Context c) {
+        try { return Settings.Global.getInt(c.getContentResolver(), K_DRM, 0) == 1; }
         catch (Throwable t) { return false; }
     }
 
