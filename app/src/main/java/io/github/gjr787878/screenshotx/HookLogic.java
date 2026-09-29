@@ -12,11 +12,13 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.system.OsConstants;
 import android.view.MotionEvent;
+import android.view.WindowManager;
 
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
@@ -139,11 +141,110 @@ public class HookLogic {
             log("ScreenshotHelper hook failed: " + t);
         }
 
+        // 截取受保护 / DRM 内容：剥离窗口 FLAG_SECURE（受对应开关控制，回调内动态读取）
+        try {
+            installSecureBypass();
+        } catch (Throwable t) {
+            log("secure bypass install failed: " + t);
+        }
+
         // 开机后尽力预建常驻 Root shell（兜底路径用）
         new Thread(HookLogic::ensureDirectShell).start();
 
         installed = true;
         log("install: hooking done");
+    }
+
+    /** FLAG_SECURE 标志位（窗口级）。 */
+    private static final int FLAG_SECURE = 0x00002000;
+    /** WindowManager.LayoutParams.privateFlags 中的 PRIVATE_FLAG_SECURE。 */
+    private static final int PRIVATE_FLAG_SECURE = 0x00000002;
+    private static volatile boolean secureInstalled = false;
+
+    /**
+     * 绕过安全窗口黑屏：hook 窗口 secure 判定返回 false，并在窗口 add/relayout 时
+     * 剥离 FLAG_SECURE / PRIVATE_FLAG_SECURE，使 SurfaceFlinger 不再把该 layer 当
+     * 受保护内容（受保护 layer 在截图时会被涂黑）。
+     * 注意：仅对 FLAG_SECURE 有效；硬件级 Widevine L1 / secure decoder 的帧在
+     * TrustZone 受保护缓冲中，不进普通内存，软件无法截取。
+     */
+    private static void installSecureBypass() {
+        if (secureInstalled) return;
+
+        // 1) WindowState 安全判定：isSecureLocked()/isSecure() 返回 false；构造后清 mAttrs
+        try {
+            Class<?> ws = XposedHelpers.findClass(
+                    "com.android.server.wm.WindowState", serverCl);
+            for (Method m : ws.getDeclaredMethods()) {
+                Class<?>[] pts = m.getParameterTypes();
+                String n = m.getName();
+                if (pts.length == 0 && m.getReturnType() == boolean.class
+                        && (n.equals("isSecureLocked") || n.equals("isSecure"))) {
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (secureOn()) p.setResult(Boolean.FALSE);
+                        }
+                    });
+                }
+            }
+            XposedBridge.hookAllConstructors(ws, new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (!secureOn()) return;
+                    try {
+                        Object attrs = XposedHelpers.getObjectField(p.thisObject, "mAttrs");
+                        if (attrs instanceof WindowManager.LayoutParams) {
+                            stripSecure((WindowManager.LayoutParams) attrs);
+                        }
+                    } catch (Throwable ignored) {}
+                }
+            });
+            log("WindowState secure hooks installed");
+        } catch (Throwable t) {
+            log("secure: WindowState hook failed: " + t);
+        }
+
+        // 2) WindowManagerService addWindow / relayoutWindow：传入的 LayoutParams 剥离 secure
+        try {
+            Class<?> wms = XposedHelpers.findClass(
+                    "com.android.server.wm.WindowManagerService", serverCl);
+            XC_MethodHook strip = new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (!secureOn()) return;
+                    for (Object a : p.args) {
+                        if (a instanceof WindowManager.LayoutParams) {
+                            stripSecure((WindowManager.LayoutParams) a);
+                        }
+                    }
+                }
+            };
+            Set<?> a = XposedBridge.hookAllMethods(wms, "addWindow", strip);
+            Set<?> b = XposedBridge.hookAllMethods(wms, "relayoutWindow", strip);
+            log("WMS secure strip hooks: addWindow=" + a.size()
+                    + " relayoutWindow=" + b.size());
+        } catch (Throwable t) {
+            log("secure: WMS hook failed: " + t);
+        }
+
+        secureInstalled = true;
+    }
+
+    /** “截取受保护内容”开关是否开启（system_server 内直接读 Settings.Global）。 */
+    private static boolean secureOn() {
+        Context c = sysContext;
+        if (c == null) c = resolveSystemContext();
+        return c != null && Prefs.drmCapture(c);
+    }
+
+    /** 剥离 LayoutParams 上的窗口级与私有 secure 标志。 */
+    private static void stripSecure(WindowManager.LayoutParams lp) {
+        try {
+            lp.flags &= ~FLAG_SECURE;
+        } catch (Throwable ignored) {}
+        try {
+            Field pf = WindowManager.LayoutParams.class.getDeclaredField("privateFlags");
+            pf.setAccessible(true);
+            pf.setInt(lp, pf.getInt(lp) & ~PRIVATE_FLAG_SECURE);
+        } catch (Throwable ignored) {}
     }
 
     private static synchronized void installGesture(Context c) {
