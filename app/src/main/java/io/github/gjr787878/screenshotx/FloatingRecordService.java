@@ -8,19 +8,17 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.Button;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 /**
- * 录屏悬浮窗控制：
- * - 深色圆角胶囊，左上角红点，右上角计时器
- * - 下方圆形按钮：麦克风 / 停止（红色） / 关闭（X）
- * - 设置 FLAG_SECURE，录屏时悬浮窗不会被录进去（显示为黑色块）
- * - 可拖动位置
+ * 录屏悬浮小胶囊：
+ * - 只有红点 + 计时器（MM:SS），深色圆角背景
+ * - 按住拖动位置，单击结束录屏
+ * - 不加 FLAG_SECURE，会被录进去（用户要求）
  */
 public class FloatingRecordService extends Service {
 
@@ -32,7 +30,6 @@ public class FloatingRecordService extends Service {
     private TextView timerTv;
     private final Handler timerHandler = new Handler(Looper.getMainLooper());
     private long startTime;
-    private boolean micOn = true;
 
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -62,59 +59,28 @@ public class FloatingRecordService extends Service {
         wm = getSystemService(WindowManager.class);
         startTime = System.currentTimeMillis();
 
-        // 根布局：深色圆角胶囊
+        // 胶囊：横向 LinearLayout，红点 + 时间
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundDrawable(roundBg(0xCC1A1A1A, dp(28)));
-        root.setPadding(dp(16), dp(12), dp(16), dp(12));
-
-        // 顶部行：红点 + 计时器
-        LinearLayout topRow = new LinearLayout(this);
-        topRow.setOrientation(LinearLayout.HORIZONTAL);
-        topRow.setGravity(Gravity.CENTER_VERTICAL);
+        root.setOrientation(LinearLayout.HORIZONTAL);
+        root.setGravity(Gravity.CENTER_VERTICAL);
+        root.setBackgroundDrawable(roundBg(0xCC1A1A1A, dp(16)));
+        root.setPadding(dp(12), dp(6), dp(12), dp(6));
 
         // 红点
         View dot = new View(this);
-        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(dp(10), dp(10));
-        dot.setBackgroundDrawable(roundBg(0xFFFF3B30, dp(5)));
-        topRow.addView(dot, dotLp);
+        LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(8), dp(8));
+        dot.setBackgroundDrawable(roundBg(0xFFFF3B30, dp(4)));
+        root.addView(dot, dotLp);
 
         // 计时器
         timerTv = new TextView(this);
         timerTv.setText("00:00");
         timerTv.setTextColor(Color.WHITE);
-        timerTv.setTextSize(16);
-        timerTv.setPadding(dp(8), 0, 0, 0);
-        topRow.addView(timerTv);
+        timerTv.setTextSize(13);
+        timerTv.setPadding(dp(6), 0, 0, 0);
+        root.addView(timerTv);
 
-        root.addView(topRow);
-
-        // 按钮行：麦克风 / 停止 / 关闭
-        LinearLayout btnRow = new LinearLayout(this);
-        btnRow.setOrientation(LinearLayout.HORIZONTAL);
-        btnRow.setPadding(0, dp(12), 0, 0);
-
-        // 麦克风按钮
-        Button micBtn = circleBtn("🎙", 0x33FFFFFF);
-        micBtn.setOnClickListener(v -> {
-            micOn = !micOn;
-            micBtn.setText(micOn ? "🎙" : "🔇");
-        });
-        btnRow.addView(micBtn);
-
-        // 停止按钮（红色）
-        Button stopBtn = circleBtn("●", 0xFFFF3B30);
-        stopBtn.setOnClickListener(v -> stopRecording());
-        btnRow.addView(stopBtn, marginLp(dp(12), 0, 0, 0));
-
-        // 关闭按钮（X）
-        Button closeBtn = circleBtn("✕", 0x33FFFFFF);
-        closeBtn.setOnClickListener(v -> stopRecording());
-        btnRow.addView(closeBtn, marginLp(dp(12), 0, 0, 0));
-
-        root.addView(btnRow);
-
-        // 窗口参数：TYPE_APPLICATION_OVERLAY，FLAG_SECURE 防止被录进去
+        // 窗口参数：不加 FLAG_SECURE，会被录进去
         int type = android.os.Build.VERSION.SDK_INT >= 26
                 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 : WindowManager.LayoutParams.TYPE_PHONE;
@@ -124,8 +90,7 @@ public class FloatingRecordService extends Service {
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 type,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_SECURE,
+                        | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
         lp.y = dp(80);
@@ -134,26 +99,40 @@ public class FloatingRecordService extends Service {
         capsule = root;
         timerHandler.post(tick);
 
-        // 简单拖动支持（按下后移动）
-        root.setOnTouchListener(new android.view.View.OnTouchListener() {
+        // 拖动 + 单击结束
+        root.setOnTouchListener(new View.OnTouchListener() {
             int startX, startY;
             float touchX, touchY;
             boolean dragging;
-            @Override public boolean onTouch(View v, android.view.MotionEvent e) {
+            long downTime;
+            int totalMoved;
+
+            @Override public boolean onTouch(View v, MotionEvent e) {
                 switch (e.getAction()) {
-                    case android.view.MotionEvent.ACTION_DOWN:
+                    case MotionEvent.ACTION_DOWN:
                         startX = lp.x; startY = lp.y;
                         touchX = e.getRawX(); touchY = e.getRawY();
-                        dragging = true;
+                        downTime = System.currentTimeMillis();
+                        totalMoved = 0;
+                        dragging = false;
                         return true;
-                    case android.view.MotionEvent.ACTION_MOVE:
+                    case MotionEvent.ACTION_MOVE:
+                        int dx = (int)(e.getRawX() - touchX);
+                        int dy = (int)(e.getRawY() - touchY);
+                        if (Math.abs(dx) > 5 || Math.abs(dy) > 5) dragging = true;
                         if (dragging) {
-                            lp.x = startX + (int)(e.getRawX() - touchX);
-                            lp.y = startY + (int)(e.getRawY() - touchY);
+                            totalMoved = Math.abs(dx) + Math.abs(dy);
+                            lp.x = startX + dx;
+                            lp.y = startY + dy;
                             wm.updateViewLayout(capsule, lp);
                         }
                         return true;
-                    case android.view.MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_UP:
+                        long dur = System.currentTimeMillis() - downTime;
+                        // 短按且没怎么移动 = 单击，结束录屏
+                        if (dur < 300 && totalMoved < 10) {
+                            stopRecording();
+                        }
                         dragging = false;
                         return true;
                 }
@@ -177,34 +156,11 @@ public class FloatingRecordService extends Service {
         startService(i);
     }
 
-    private Button circleBtn(String text, int bgColor) {
-        Button b = new Button(this);
-        b.setText(text);
-        b.setTextColor(Color.WHITE);
-        b.setTextSize(14);
-        b.setAllCaps(false);
-        b.setBackgroundDrawable(roundBg(bgColor, dp(20)));
-        b.setMinWidth(dp(40));
-        b.setMinHeight(dp(40));
-        b.setPadding(0, 0, 0, 0);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(40));
-        b.setLayoutParams(lp);
-        return b;
-    }
-
     private android.graphics.drawable.Drawable roundBg(int color, int radius) {
         android.graphics.drawable.GradientDrawable gd = new android.graphics.drawable.GradientDrawable();
         gd.setColor(color);
         gd.setCornerRadius(radius);
         return gd;
-    }
-
-    private LinearLayout.LayoutParams marginLp(int l, int t, int r, int b) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.setMargins(l, t, r, b);
-        return lp;
     }
 
     private int dp(int v) {
