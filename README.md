@@ -20,6 +20,7 @@ It hooks the system framework to intercept the screenshot request and capture th
   - **Tap the preview** to open the editor immediately
 - **Built-in editor** — pens (ballpoint / highlighter / pencil / fountain / eraser), mosaic (pixel / blur / black bar / smudge / rectangle), and crop with aspect ratios
 - **Auto-save to gallery** (`Pictures/Screenshots`)
+- **Optional secure / DRM capture** — strips `FLAG_SECURE` so protected apps no longer come out black (hardware-protected Widevine L1 streams still stay black)
 - **Trilingual UI** — English, 中文, Русский
 - Liquid-glass styled settings (built with [GlassButtons](https://github.com/GJR787878/GlassButtons))
 
@@ -55,7 +56,7 @@ Use **Test screenshot** inside the app to verify that capture works.
 The keep-alive foreground service uses an `IMPORTANCE_MIN` channel — no sound, no status-bar icon, tucked at the bottom of the notification shade. It guarantees the floating preview can always be launched.
 
 **Can it capture secure / DRM content?**
-No. It behaves like a normal screenshot and respects secure windows.
+Enable **Capture secure / DRM content** in settings. It strips `FLAG_SECURE` inside the system server, so windows that normally capture as black (banking, privacy, many video apps) are captured normally. Truly hardware-protected streams — Widevine **L1** / a secure decoder rendering to a protected Surface — stay black: their frames live in a TrustZone-protected buffer and never enter normal memory, so no software can capture them. Widevine L3 and non-secure video work once the option is on.
 
 **Why no Magisk superuser toast on every shot?**
 A root shell is kept alive and reused, so the grant prompt appears only once.
@@ -87,6 +88,7 @@ English · 中文 · Русский — switch with the button at the top of the
   - **点击预览**立即进入编辑器
 - **内置编辑器**：画笔（圆珠笔 / 荧光笔 / 铅笔 / 钢笔 / 橡皮擦）、马赛克（像素 / 模糊 / 黑条 / 涂抹 / 矩形）、裁剪（含比例）
 - **自动保存到相册**（`Pictures/Screenshots`）
+- **可选的受保护 / DRM 截图**：剥离 `FLAG_SECURE`，让受保护 App 不再截成黑屏（硬件级 Widevine L1 视频仍会黑屏）
 - **三语界面**：中文、English、Русский
 - 毛玻璃风格设置界面（基于 [GlassButtons](https://github.com/GJR787878/GlassButtons)）
 
@@ -122,7 +124,7 @@ English · 中文 · Русский — switch with the button at the top of the
 保活前台服务使用 `IMPORTANCE_MIN` 渠道——不发声、状态栏不显示图标，折叠在通知栏最底部，用于保证悬浮预览随时可拉起。
 
 **能截取加密 / DRM 内容吗？**
-不能。行为与普通截图一致，尊重安全窗口。
+在设置中开启**「截取受保护 / DRM 内容」**即可。它会在系统框架内剥离 `FLAG_SECURE`，让平时截成黑屏的窗口（银行、隐私、多数视频 App）正常成像。但真正硬件级保护的视频——Widevine **L1** / 安全解码器输出到受保护 Surface——仍会黑屏：其帧数据位于 TrustZone 保护的缓冲区、永不进入普通内存，任何软件都无法截取。Widevine L3 与非安全视频在开启后可正常截取。
 
 **为什么不是每次截图都弹 Magisk 超级用户提示？**
 Root shell 常驻复用，授权提示只出现一次。
@@ -154,6 +156,7 @@ Root shell 常驻复用，授权提示只出现一次。
   - **нажмите на превью**, чтобы сразу открыть редактор
 - **Встроенный редактор** — ручки (шариковая / маркер / карандаш / перо / ластик), мозаика (пиксели / размытие / чёрная полоса / размазывание / прямоугольник) и обрезка с пропорциями
 - **Автосохранение в галерею** (`Pictures/Screenshots`)
+- **Опциональный захват защищённого / DRM-контента** — снимает `FLAG_SECURE`, чтобы защищённые приложения не получались чёрными (потоки с аппаратной защитой Widevine L1 остаются чёрными)
 - **Три языка интерфейса** — English, 中文, Русский
 - Настройки в стиле жидкого стекла (на основе [GlassButtons](https://github.com/GJR787878/GlassButtons))
 
@@ -189,7 +192,7 @@ Root shell 常驻复用，授权提示只出现一次。
 Фоновая служба использует канал `IMPORTANCE_MIN` — без звука и значка в строке состояния, свёрнута внизу шторки. Она гарантирует, что плавающее превью всегда запустится.
 
 **Можно ли снимать защищённый / DRM-контент?**
-Нет. Поведение как у обычного скриншота, защищённые окна учитываются.
+Включите **«Снимать защищённый / DRM-контент»** в настройках. Модуль снимает `FLAG_SECURE` внутри системного сервера, и окна, которые обычно получаются чёрными (банковские, приватные, многие видеоприложения), захватываются нормально. Реальные потоки с аппаратной защитой — Widevine **L1** / защищённый декодер на защищённой Surface — остаются чёрными: их кадры находятся в буфере под защитой TrustZone и не попадают в обычную память, поэтому программно их снять невозможно. Widevine L3 и незащищённое видео работают после включения опции.
 
 **Почему не появляется запрос суперпользователя Magisk при каждом снимке?**
 Root-оболочка остаётся запущенной и переиспользуется, поэтому запрос появляется только один раз.
