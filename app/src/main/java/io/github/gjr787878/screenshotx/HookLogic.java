@@ -8,6 +8,8 @@ import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SharedMemory;
+import android.os.VibrationEffect;
+import android.os.Vibrator;
 import android.system.OsConstants;
 
 import java.io.DataOutputStream;
@@ -42,6 +44,9 @@ public class HookLogic {
     // system_server 内常驻的 Root shell，省去每次触发冷启动 su
     private static Process rootShellProc;
     private static DataOutputStream rootShellOs;
+
+    // §触发反馈：短震动，system_server(uid=system) 自带 VIBRATE 权限
+    private static Vibrator vibrator;
 
     public static synchronized void log(String msg) {
         String line = new SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new Date())
@@ -146,7 +151,10 @@ public class HookLogic {
                 p.setResult(null); // 取消系统截屏
                 log("intercepted " + p.method.getDeclaringClass().getSimpleName()
                         + "." + p.method.getName() + " fire=" + fire);
-                if (fire) OWN.postDelayed(HookLogic::fire, 0);
+                if (fire) {
+                    if (c != null) vibrate(c); // 立刻震动反馈
+                    OWN.postDelayed(HookLogic::fire, 0);
+                }
             }
         };
         Set<?> a = XposedBridge.hookAllMethods(cls, "takeScreenshot", replace);
@@ -157,6 +165,19 @@ public class HookLogic {
 
     /** 供三指手势调用。 */
     public static void requestShot() { fire(); }
+
+    /** 触发截图后立刻短震动反馈（40ms）。system_server 为 system uid，自带 VIBRATE 权限。 */
+    public static void vibrate(Context c) {
+        try {
+            if (vibrator == null) vibrator = c.getSystemService(Vibrator.class);
+            if (vibrator != null && vibrator.hasVibrator()) {
+                vibrator.vibrate(VibrationEffect.createOneShot(
+                        40L, VibrationEffect.DEFAULT_AMPLITUDE));
+            }
+        } catch (Throwable t) {
+            log("vibrate failed: " + t);
+        }
+    }
 
     /** 兜底获取系统 Context。 */
     private static Context resolveSystemContext() {
