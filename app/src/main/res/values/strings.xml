@@ -41,4 +41,6 @@
     <string name="saving">Saving…</string>
     <string name="saved_to">Saved to Pictures/Screenshots</string>
     <string name="save_fail_prefix">Save failed: </string>
+    <string name="picker_grid">Grid</string>
+    <string name="picker_ring">Ring</string>
 </resources>
