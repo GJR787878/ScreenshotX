@@ -160,7 +160,7 @@ public class HookLogic {
                 Context c = sysContext;
                 boolean keysOn = c == null ? true : Prefs.keys(c);
                 long now = System.currentTimeMillis();
-                boolean fire = (now - lastTrigger) > 1500;
+                boolean fire = (now - lastTrigger) > 300;
                 lastTrigger = now;
                 if (!keysOn) {
                     // 按键截屏已关闭：放行系统默认截屏，不拦截
