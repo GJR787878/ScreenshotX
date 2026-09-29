@@ -18,4 +18,27 @@
     <string name="save_failed">自动保存失败</string>
     <string name="export_ok">已导出 Download/111.zip</string>
     <string name="export_fail">导出失败</string>
+    <string name="pen_ball">圆珠笔</string>
+    <string name="pen_marker">荧光笔</string>
+    <string name="pen_pencil">铅笔</string>
+    <string name="pen_fountain">钢笔</string>
+    <string name="pen_eraser">橡皮擦</string>
+    <string name="share">分享</string>
+    <string name="mode_mark">标记</string>
+    <string name="mode_mosaic">马赛克</string>
+    <string name="mode_crop">形状裁剪</string>
+    <string name="width">粗细</string>
+    <string name="mos_pixel">像素</string>
+    <string name="mos_blur">模糊</string>
+    <string name="mos_black">黑块</string>
+    <string name="mos_paint">涂抹</string>
+    <string name="mos_rect">框选</string>
+    <string name="ratio">比例</string>
+    <string name="ratio_free">自由</string>
+    <string name="cancel">取消</string>
+    <string name="apply_crop">应用裁剪</string>
+    <string name="cropped">已裁剪</string>
+    <string name="saving">保存中…</string>
+    <string name="saved_to">已保存到 Pictures/Screenshots</string>
+    <string name="save_fail_prefix">保存失败: </string>
 </resources>
