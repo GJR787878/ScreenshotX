@@ -61,8 +61,13 @@ public class RecordService extends Service {
             recordProc = Runtime.getRuntime().exec("su");
             recordOs = new DataOutputStream(recordProc.getOutputStream());
             // screenrecord 参数：竖屏、4Mbps、最长 30 分钟
-            recordOs.writeBytes("screenrecord --bit-rate 4000000 --time-limit 1800 "
-                    + outputPath + " &\n");
+            // 先杀掉所有旧的 screenrecord 进程，避免残留导致发热
+            recordOs.writeBytes("pkill -f screenrecord\n");
+            recordOs.flush();
+            // screenrecord 前台运行（不加 &），这样 Ctrl+C 才能正确停止
+            // 码率降到 2Mbps，分辨率 720p，减少发热和卡顿
+            recordOs.writeBytes("screenrecord --bit-rate 2000000 --size 720x1280 --time-limit 1800 "
+                    + outputPath + "\n");
             recordOs.flush();
             recording = true;
             KeyInterceptor.setRecording(true);
@@ -91,9 +96,11 @@ public class RecordService extends Service {
         try {
             if (recordOs != null) {
                 // 发送 Ctrl+C 结束 screenrecord
-                recordOs.write(3); // Ctrl+C 结束 screenrecord
+                recordOs.write(3);
                 recordOs.flush();
             }
+            // 兜底：再 pkill 一次，确保没有残留进程
+
             if (recordProc != null) {
                 recordProc.waitFor();
                 recordProc.destroy();
