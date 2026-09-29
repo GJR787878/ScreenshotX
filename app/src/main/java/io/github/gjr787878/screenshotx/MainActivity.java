@@ -9,6 +9,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -136,7 +137,10 @@ public class MainActivity extends Activity {
         export.setOnClickListener(v -> exportDiag());
         root.addView(export, marginLp(0, dp(4), 0, 0));
 
-        setContentView(root);
+        ScrollView sv = new ScrollView(this);
+        sv.setBackgroundColor(0xFF000000);
+        sv.addView(root);
+        setContentView(sv);
     }
 
     private LinearLayout.LayoutParams marginLp(int l, int t, int r, int btm) {
