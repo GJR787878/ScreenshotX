@@ -568,7 +568,7 @@ public class HookLogic {
             }
             return false;
         }
-        }
+    }
 
     /** 触发录屏（由 KeyInterceptor 调用）。 */
     public static void startRecording() {
