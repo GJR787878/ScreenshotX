@@ -82,8 +82,10 @@ public class FloatingPreviewService extends Service {
         final int g;
         synchronized (this) { g = ++gen; }
         currentPath = path;
-        finished = false;
+        // 先 teardown（内部会置 finished=true，阻断 cancel 触发的误回调），
+        // 再置 finished=false，让本次新倒计时能正常结束并触发 fade out
         teardownView();
+        finished = false;
 
         if (!Settings.canDrawOverlays(this)) {
             openEditor(path);
@@ -117,16 +119,16 @@ public class FloatingPreviewService extends Service {
         final int g;
         synchronized (this) { g = ++gen; }
         currentBitmap = bmp;
+        // 同 show()：先 teardown，再置 finished=false
+        teardownView();
         finished = false;
         synchronized (fileLock) { fileReady = false; }
-        teardownView();
 
         if (!Settings.canDrawOverlays(this)) {
             // 无悬浮权限：后台落盘后打开编辑器兜底
             new Thread(() -> {
                 File f = persist(bmp, g);
                 if (f != null) {
-                    // 只有 gen 匹配时才更新 currentPath，避免旧线程覆盖新路径
                     synchronized (this) { if (g == gen) currentPath = f.getAbsolutePath(); }
                 }
                 synchronized (fileLock) {
@@ -384,7 +386,7 @@ public class FloatingPreviewService extends Service {
     }
 
     private void teardownView() {
-        // 关键修复：先置 finished=true，确保 animator.cancel() 触发的 onAnimationEnd
+        // 置 finished=true，确保 animator.cancel() 同步触发的 onAnimationEnd
         // 中 if (finished) return; 直接返回，不会误调用 saveAndFadeOut 造成浮窗残留
         finished = true;
         if (animator != null) {
