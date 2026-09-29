@@ -14,6 +14,7 @@ public class Prefs {
     public static final String K_THREE = "screenshotx_threefinger";// 三指下滑
     public static final String K_DRM = "screenshotx_drm";          // 截取受保护/DRM 内容
     public static final String K_LANG = "screenshotx_lang";        // zh / en / ru
+    public static final String K_REC_BITRATE = "screenshotx_rec_bitrate"; // 录屏码率（bps）
 
     public static boolean keys(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_KEYS, 1) == 1; }
@@ -29,6 +30,12 @@ public class Prefs {
     public static boolean drmCapture(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_DRM, 0) == 1; }
         catch (Throwable t) { return false; }
+    }
+
+    /** 录屏码率（bps），默认 2Mbps。 */
+    public static int recBitrate(Context c) {
+        try { return Settings.Global.getInt(c.getContentResolver(), K_REC_BITRATE, 2000000); }
+        catch (Throwable t) { return 2000000; }
     }
 
     /** 语言代码，默认简中。 */
