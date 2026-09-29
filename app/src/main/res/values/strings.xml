@@ -43,4 +43,7 @@
     <string name="save_fail_prefix">Save failed: </string>
     <string name="picker_grid">Grid</string>
     <string name="picker_ring">Ring</string>
+    <string name="notif_channel">Keep-alive service</string>
+    <string name="notif_text">Screenshot capture service running</string>
 </resources>
+
