@@ -92,7 +92,8 @@ public class FloatingRecordService extends Service {
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
                         | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
-        lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
+        lp.gravity = Gravity.TOP | Gravity.LEFT;
+        lp.x = getResources().getDisplayMetrics().widthPixels / 2 - dp(60);
         lp.y = dp(80);
 
         wm.addView(root, lp);
