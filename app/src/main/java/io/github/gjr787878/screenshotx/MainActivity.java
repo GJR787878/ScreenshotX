@@ -92,6 +92,27 @@ public class MainActivity extends Activity {
         });
         root.addView(threeSw, marginLp(0, dp(4), 0, dp(4)));
 
+        // 截取受保护 / DRM 内容开关（绕过 FLAG_SECURE 黑屏）
+        final GlassCapsuleButton drmSw = new GlassCapsuleButton(this);
+        drmSw.setText(R.string.trigger_drm);
+        drmSw.setGlassSelected(Prefs.drmCapture(this));
+        drmSw.setOnClickListener(v -> {
+            boolean sel = !drmSw.isGlassSelected();
+            drmSw.setGlassSelected(sel);
+            final String val = sel ? "1" : "0";
+            new Thread(() -> Prefs.putGlobal(Prefs.K_DRM, val)).start();
+        });
+        root.addView(drmSw, marginLp(0, dp(4), 0, dp(2)));
+
+        // DRM 限制说明（小字）
+        TextView drmNote = new TextView(this);
+        drmNote.setText(R.string.drm_note);
+        drmNote.setTextColor(0xFF999999);
+        drmNote.setTextSize(12);
+        drmNote.setLineSpacing(dp(2), 1f);
+        drmNote.setPadding(dp(2), 0, dp(2), dp(8));
+        root.addView(drmNote);
+
         TextView steps = new TextView(this);
         steps.setText(R.string.usage);
         steps.setTextColor(0xFFCCCCCC);
