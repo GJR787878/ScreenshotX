@@ -95,38 +95,47 @@ public class RecordService extends Service {
         if (!recording) return;
         recording = false;
         KeyInterceptor.setRecording(false);
-        try {
-            // 1. Ctrl+C 优雅停止
-            if (recordOs != null) {
-                try { recordOs.write(3); recordOs.flush(); } catch (Throwable ignored) {}
-            }
-            // 2. 兜底：新开 su 进程 pkill，确保 screenrecord 被杀干净
-            try {
-                Process killP = Runtime.getRuntime().exec("su");
-                DataOutputStream killOs = new DataOutputStream(killP.getOutputStream());
-                killOs.writeBytes("pkill -f screenrecord\n");
-                killOs.writeBytes("exit\n");
-                killOs.flush();
-                killP.waitFor();
-                killP.destroy();
-            } catch (Throwable ignored) {}
-            // 3. 销毁 su 进程（不 waitFor，防止卡死）
-            if (recordProc != null) {
-                try { recordProc.destroy(); } catch (Throwable ignored) {}
-            }
-        } catch (Throwable ignored) {}
+        // 保存到相册（后台线程）
+        final Process oldProc = recordProc;
+        final DataOutputStream oldOs = recordOs;
         recordProc = null;
         recordOs = null;
 
-        android.util.Log.d("ScreenshotX", "recording stopped, saving: " + outputPath);
-
-        // 隐藏悬浮窗
+        // 立刻隐藏悬浮窗，不要等后台操作
         Intent fi = new Intent(this, FloatingRecordService.class);
         fi.setAction(FloatingRecordService.ACTION_HIDE);
         startService(fi);
 
+        // 后台线程做杀进程和保存文件，不阻塞主线程
+        new Thread(() -> {
+            try {
+                // 1. Ctrl+C 优雅停止
+                if (oldOs != null) {
+                    try { oldOs.write(3); oldOs.flush(); } catch (Throwable ignored) {}
+                }
+                // 2. 等 500ms 让 screenrecord 写完文件
+                try { Thread.sleep(500); } catch (Throwable ignored) {}
+                // 3. 兜底 pkill
+                try {
+                    Process killP = Runtime.getRuntime().exec("su");
+                    DataOutputStream killOs = new DataOutputStream(killP.getOutputStream());
+                    killOs.writeBytes("pkill -f screenrecord\n");
+                    killOs.writeBytes("exit\n");
+                    killOs.flush();
+                    killP.waitFor();
+                    killP.destroy();
+                } catch (Throwable ignored) {}
+                // 4. 销毁旧进程
+                if (oldProc != null) {
+                    try { oldProc.destroy(); } catch (Throwable ignored) {}
+                }
+            } catch (Throwable ignored) {}
+        }).start();
+
+        android.util.Log.d("ScreenshotX", "recording stopped, saving: " + path);
+
         // 保存到相册（后台线程）
-        final String path = outputPath;
+        // 保存到相册（后台线程）
         new Thread(() -> {
             try {
                 // 先 chmod 让 MediaSaver 能读
