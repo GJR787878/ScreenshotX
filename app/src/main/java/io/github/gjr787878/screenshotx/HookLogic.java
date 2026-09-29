@@ -7,7 +7,6 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.ParcelFileDescriptor;
 import android.os.SharedMemory;
 import android.system.OsConstants;
 
@@ -234,16 +233,17 @@ public class HookLogic {
         try {
             int w = bmp.getWidth(), h = bmp.getHeight();
             int bytes = bmp.getByteCount();
-            shm = SharedMemory.create("screenshotx-shot", bytes + 12);
-            ByteBuffer bb = shm.setReadWrite();
+            int total = bytes + 12;
+            shm = SharedMemory.create("screenshotx-shot", total);
+            ByteBuffer bb = shm.map(OsConstants.PROT_READ | OsConstants.PROT_WRITE, 0, total);
             bb.putInt(w); bb.putInt(h); bb.putInt(bytes);
             bmp.copyPixelsToBuffer(bb);
+            SharedMemory.unmap(bb);
             shm.setProtect(OsConstants.PROT_READ);
-            ParcelFileDescriptor pfd = ParcelFileDescriptor.dup(shm.getFd());
             Intent i = new Intent();
             i.setClassName("io.github.gjr787878.screenshotx",
                     "io.github.gjr787878.screenshotx.FloatingPreviewService");
-            i.putExtra("shm", pfd);
+            i.putExtra("shm", shm); // SharedMemory 为 Parcelable，Binder 自动传 ashmem fd
             c.startService(i);
             log("surface shot delivered via shm " + w + "x" + h);
             return true;
