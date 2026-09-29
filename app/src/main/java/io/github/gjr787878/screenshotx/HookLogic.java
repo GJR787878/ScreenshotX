@@ -186,13 +186,22 @@ public class HookLogic {
 
     /** 触发截图后立刻短震动反馈（40ms）。system_server 为 system uid，自带 VIBRATE 权限。 */
     public static void vibrate(Context c) {
+        vibrate(c, 40L, VibrationEffect.DEFAULT_AMPLITUDE);
+    }
+
+    /** 三指下滑专用震动：强度更高，弥补没有按键震动叠加的体感差异。 */
+    public static void vibrateStrong(Context c) {
+        vibrate(c, 60L, 160);
+    }
+
+    /** 通用震动入口，可自定义时长与振幅。 */
+    public static void vibrate(Context c, long duration, int amplitude) {
         try {
-            Context use = sysContext != null ? sysContext : c; // 统一用确定可用的系统 Context
+            Context use = sysContext != null ? sysContext : c;
             if (use == null) return;
-            Vibrator v = use.getSystemService(Vibrator.class); // 每次获取，避免缓存到坏实例
+            Vibrator v = use.getSystemService(Vibrator.class);
             if (v != null && v.hasVibrator()) {
-                v.vibrate(VibrationEffect.createOneShot(
-                        40L, VibrationEffect.DEFAULT_AMPLITUDE));
+                v.vibrate(VibrationEffect.createOneShot(duration, amplitude));
             }
         } catch (Throwable t) {
             log("vibrate failed: " + t);
