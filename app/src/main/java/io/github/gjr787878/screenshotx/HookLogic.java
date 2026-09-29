@@ -313,7 +313,7 @@ public class HookLogic {
     private static Bitmap toSoftwareBitmap(Bitmap bmp) {
         if (bmp == null) return null;
         try {
-            if (bmp.getConfig() == Bitmap.Config.HARDWARE || !bmp.isSoftware()) {
+            if (bmp.isHardware()) {
                 Bitmap sw = bmp.copy(Bitmap.Config.ARGB_8888, false);
                 if (sw != null) return sw;
             }
