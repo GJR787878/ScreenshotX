@@ -8,11 +8,11 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
-import android.widget.Button;
 import android.widget.LinearLayout;
-import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.gjr.glassbutton.GlassCapsuleButton;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -35,7 +35,8 @@ public class MainActivity extends Activity {
 
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(24), dp(60), dp(24), dp(32));
+        // §3.6 根布局 padding：顶48、左右24、底32
+        root.setPadding(dp(24), dp(48), dp(24), dp(32));
         root.setBackgroundColor(0xFF000000);
 
         TextView title = new TextView(this);
@@ -45,22 +46,22 @@ public class MainActivity extends Activity {
         title.setPadding(0, 0, 0, dp(16));
         root.addView(title);
 
-        // 三语切换按钮：中 → En → Ru 循环
-        Button langBtn = new Button(this);
+        // 三语切换按钮
+        final GlassCapsuleButton langBtn = new GlassCapsuleButton(this);
         updateLangBtn(langBtn);
         langBtn.setOnClickListener(v -> cycleLang());
-        root.addView(langBtn);
+        root.addView(langBtn, marginLp(0, dp(8), 0, dp(4)));
 
         rootStatus = new TextView(this);
         rootStatus.setText(R.string.root_checking);
         rootStatus.setTextColor(0xFFCCCCCC);
         rootStatus.setTextSize(15);
-        rootStatus.setPadding(0, dp(12), 0, dp(16));
+        rootStatus.setPadding(0, dp(12), 0, dp(12));
         root.addView(rootStatus);
         requestRoot();
         try { startService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
 
-        // 触发方式分组
+        // 触发方式
         TextView trigHeader = new TextView(this);
         trigHeader.setText(R.string.trigger_header);
         trigHeader.setTextColor(0xFFFFFFFF);
@@ -68,23 +69,28 @@ public class MainActivity extends Activity {
         trigHeader.setPadding(0, dp(8), 0, dp(8));
         root.addView(trigHeader);
 
-        Switch keySw = new Switch(this);
+        // §3.6 所有开关必须用 GlassCapsuleButton，禁止原生 Switch
+        final GlassCapsuleButton keySw = new GlassCapsuleButton(this);
         keySw.setText(R.string.trigger_keys);
-        keySw.setTextColor(0xFFEEEEEE);
-        keySw.setPadding(0, dp(4), 0, dp(4));
-        keySw.setChecked(Prefs.keys(this));
-        keySw.setOnCheckedChangeListener((v, checked) ->
-                new Thread(() -> Prefs.putGlobal(Prefs.K_KEYS, checked ? "1" : "0")).start());
-        root.addView(keySw);
+        keySw.setGlassSelected(Prefs.keys(this));
+        keySw.setOnClickListener(v -> {
+            boolean sel = !keySw.isGlassSelected();
+            keySw.setGlassSelected(sel);
+            final String val = sel ? "1" : "0";
+            new Thread(() -> Prefs.putGlobal(Prefs.K_KEYS, val)).start();
+        });
+        root.addView(keySw, marginLp(0, dp(4), 0, dp(4)));
 
-        Switch threeSw = new Switch(this);
+        final GlassCapsuleButton threeSw = new GlassCapsuleButton(this);
         threeSw.setText(R.string.trigger_three);
-        threeSw.setTextColor(0xFFEEEEEE);
-        threeSw.setPadding(0, dp(4), 0, dp(4));
-        threeSw.setChecked(Prefs.threeFinger(this));
-        threeSw.setOnCheckedChangeListener((v, checked) ->
-                new Thread(() -> Prefs.putGlobal(Prefs.K_THREE, checked ? "1" : "0")).start());
-        root.addView(threeSw);
+        threeSw.setGlassSelected(Prefs.threeFinger(this));
+        threeSw.setOnClickListener(v -> {
+            boolean sel = !threeSw.isGlassSelected();
+            threeSw.setGlassSelected(sel);
+            final String val = sel ? "1" : "0";
+            new Thread(() -> Prefs.putGlobal(Prefs.K_THREE, val)).start();
+        });
+        root.addView(threeSw, marginLp(0, dp(4), 0, dp(4)));
 
         TextView steps = new TextView(this);
         steps.setText(R.string.usage);
@@ -94,7 +100,7 @@ public class MainActivity extends Activity {
         steps.setPadding(0, dp(20), 0, dp(20));
         root.addView(steps);
 
-        Button test = new Button(this);
+        final GlassCapsuleButton test = new GlassCapsuleButton(this);
         test.setText(R.string.test_btn);
         test.setOnClickListener(v -> {
             Intent svc = new Intent(this, ScreenshotService.class);
@@ -102,17 +108,23 @@ public class MainActivity extends Activity {
             startService(svc);
             Toast.makeText(this, R.string.test_hint, Toast.LENGTH_LONG).show();
         });
-        root.addView(test);
+        root.addView(test, marginLp(0, dp(4), 0, dp(4)));
 
-        Button export = new Button(this);
+        final GlassCapsuleButton export = new GlassCapsuleButton(this);
         export.setText(R.string.export_btn);
         export.setOnClickListener(v -> exportDiag());
-        root.addView(export);
+        root.addView(export, marginLp(0, dp(4), 0, 0));
 
         setContentView(root);
     }
 
-    private void updateLangBtn(Button btn) {
+    private LinearLayout.LayoutParams marginLp(int l, int t, int r, int btm) {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        lp.setMargins(l, t, r, btm);
+        return lp;
+    }
+
+    private void updateLangBtn(GlassCapsuleButton btn) {
         String code = Prefs.lang(this);
         int nameId = "en".equals(code) ? R.string.lang_en
                 : "ru".equals(code) ? R.string.lang_ru : R.string.lang_zh;
