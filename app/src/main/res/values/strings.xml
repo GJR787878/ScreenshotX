@@ -16,4 +16,6 @@
     <string name="lang_ru">Русский</string>
     <string name="saved">Saved to gallery</string>
     <string name="save_failed">Auto-save failed</string>
+    <string name="export_ok">Exported to Download/111.zip</string>
+    <string name="export_fail">Export failed</string>
 </resources>
