@@ -66,7 +66,9 @@ public class RecordService extends Service {
             recordOs.flush();
             // screenrecord 前台运行（不加 &），这样 Ctrl+C 才能正确停止
             // 码率降到 2Mbps，分辨率 720p，减少发热和卡顿
-            recordOs.writeBytes("screenrecord --bit-rate 2000000 --size 720x1280 --time-limit 1800 "
+            int bitrate = Prefs.recBitrate(this);
+            recordOs.writeBytes("screenrecord --bit-rate " + bitrate
+                    + " --size 720x1280 --time-limit 1800 "
                     + outputPath + "\n");
             recordOs.flush();
             recording = true;
