@@ -1,0 +1,19 @@
+<resources>
+    <string name="app_name">ScreenshotX</string>
+    <string name="root_checking">Root 状态：检测中…</string>
+    <string name="root_granted">Root 状态：已授权 ✓</string>
+    <string name="root_denied">Root 状态：未授权 ✗（请在 Magisk 中允许）</string>
+    <string name="usage">使用方法：\n1. 打开本 App，在 Magisk 弹窗中授予 Root 权限\n2. 在 LSPosed 中启用本模块\n3. 作用域勾选「系统框架」(system)\n4. 重启手机（或重启系统框架）\n5. 按 电源键+音量下 截屏\n\n下面按钮可测试 Root 截屏是否可用：</string>
+    <string name="test_btn">测试截屏</string>
+    <string name="test_hint">若已授权 Root，将打开编辑器</string>
+    <string name="export_btn">导出诊断日志 (111.zip)</string>
+    <string name="trigger_header">触发方式</string>
+    <string name="trigger_keys">按键截屏（电源键 + 音量下）</string>
+    <string name="trigger_three">三指下滑截屏</string>
+    <string name="language_btn">语言</string>
+    <string name="lang_zh">中文</string>
+    <string name="lang_en">English</string>
+    <string name="lang_ru">Русский</string>
+    <string name="saved">已保存到相册</string>
+    <string name="save_failed">自动保存失败</string>
+</resources>
