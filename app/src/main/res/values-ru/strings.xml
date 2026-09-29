@@ -41,4 +41,6 @@
     <string name="saving">Сохранение…</string>
     <string name="saved_to">Сохранено в Pictures/Screenshots</string>
     <string name="save_fail_prefix">Ошибка: </string>
+    <string name="picker_grid">Сетка</string>
+    <string name="picker_ring">Кольцо</string>
 </resources>
