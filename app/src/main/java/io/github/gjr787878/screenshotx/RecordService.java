@@ -96,16 +96,23 @@ public class RecordService extends Service {
         recording = false;
         KeyInterceptor.setRecording(false);
         try {
+            // 1. Ctrl+C 优雅停止
             if (recordOs != null) {
-                // 发送 Ctrl+C 结束 screenrecord
-                recordOs.write(3);
-                recordOs.flush();
+                try { recordOs.write(3); recordOs.flush(); } catch (Throwable ignored) {}
             }
-            // 兜底：再 pkill 一次，确保没有残留进程
-
+            // 2. 兜底：新开 su 进程 pkill，确保 screenrecord 被杀干净
+            try {
+                Process killP = Runtime.getRuntime().exec("su");
+                DataOutputStream killOs = new DataOutputStream(killP.getOutputStream());
+                killOs.writeBytes("pkill -f screenrecord\n");
+                killOs.writeBytes("exit\n");
+                killOs.flush();
+                killP.waitFor();
+                killP.destroy();
+            } catch (Throwable ignored) {}
+            // 3. 销毁 su 进程（不 waitFor，防止卡死）
             if (recordProc != null) {
-                recordProc.waitFor();
-                recordProc.destroy();
+                try { recordProc.destroy(); } catch (Throwable ignored) {}
             }
         } catch (Throwable ignored) {}
         recordProc = null;
