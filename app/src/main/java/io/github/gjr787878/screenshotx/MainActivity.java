@@ -2,6 +2,7 @@ package io.github.gjr787878.screenshotx;
 
 import android.app.Activity;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -9,6 +10,7 @@ import android.os.Environment;
 import android.provider.MediaStore;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -23,6 +25,10 @@ public class MainActivity extends Activity {
 
     private TextView rootStatus;
 
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Lang.wrap(base));
+    }
+
     @Override
     protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -33,52 +39,93 @@ public class MainActivity extends Activity {
         root.setBackgroundColor(0xFF000000);
 
         TextView title = new TextView(this);
-        title.setText("ScreenshotX");
+        title.setText(R.string.app_name);
         title.setTextColor(0xFFFFFFFF);
         title.setTextSize(28);
-        title.setPadding(0, 0, 0, dp(20));
+        title.setPadding(0, 0, 0, dp(16));
         root.addView(title);
 
+        // 三语切换按钮：中 → En → Ru 循环
+        Button langBtn = new Button(this);
+        updateLangBtn(langBtn);
+        langBtn.setOnClickListener(v -> cycleLang());
+        root.addView(langBtn);
+
         rootStatus = new TextView(this);
-        rootStatus.setText("Root 状态：检测中…");
+        rootStatus.setText(R.string.root_checking);
         rootStatus.setTextColor(0xFFCCCCCC);
         rootStatus.setTextSize(15);
-        rootStatus.setPadding(0, 0, 0, dp(20));
+        rootStatus.setPadding(0, dp(12), 0, dp(16));
         root.addView(rootStatus);
         requestRoot();
-        // 打开 App 时预热截屏服务（常驻进程 + 持久 root shell），加快首次触发
         try { startService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
 
+        // 触发方式分组
+        TextView trigHeader = new TextView(this);
+        trigHeader.setText(R.string.trigger_header);
+        trigHeader.setTextColor(0xFFFFFFFF);
+        trigHeader.setTextSize(17);
+        trigHeader.setPadding(0, dp(8), 0, dp(8));
+        root.addView(trigHeader);
+
+        Switch keySw = new Switch(this);
+        keySw.setText(R.string.trigger_keys);
+        keySw.setTextColor(0xFFEEEEEE);
+        keySw.setPadding(0, dp(4), 0, dp(4));
+        keySw.setChecked(Prefs.keys(this));
+        keySw.setOnCheckedChangeListener((v, checked) ->
+                new Thread(() -> Prefs.putGlobal(Prefs.K_KEYS, checked ? "1" : "0")).start());
+        root.addView(keySw);
+
+        Switch threeSw = new Switch(this);
+        threeSw.setText(R.string.trigger_three);
+        threeSw.setTextColor(0xFFEEEEEE);
+        threeSw.setPadding(0, dp(4), 0, dp(4));
+        threeSw.setChecked(Prefs.threeFinger(this));
+        threeSw.setOnCheckedChangeListener((v, checked) ->
+                new Thread(() -> Prefs.putGlobal(Prefs.K_THREE, checked ? "1" : "0")).start());
+        root.addView(threeSw);
+
         TextView steps = new TextView(this);
-        steps.setText("使用方法：\n"
-                + "1. 打开本 App，在 Magisk 弹窗中授予 Root 权限\n"
-                + "2. 在 LSPosed 中启用本模块\n"
-                + "3. 作用域勾选「系统框架」(system)\n"
-                + "4. 重启手机（或重启系统框架）\n"
-                + "5. 按 电源键+音量下 截屏\n\n"
-                + "下面按钮可测试 Root 截屏是否可用：");
+        steps.setText(R.string.usage);
         steps.setTextColor(0xFFCCCCCC);
         steps.setTextSize(15);
         steps.setLineSpacing(dp(4), 1f);
-        steps.setPadding(0, 0, 0, dp(24));
+        steps.setPadding(0, dp(20), 0, dp(20));
         root.addView(steps);
 
         Button test = new Button(this);
-        test.setText("测试截屏");
+        test.setText(R.string.test_btn);
         test.setOnClickListener(v -> {
             Intent svc = new Intent(this, ScreenshotService.class);
             svc.setAction(ScreenshotService.ACTION_SHOOT);
             startService(svc);
-            Toast.makeText(this, "若已授权 Root，将打开编辑器", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, R.string.test_hint, Toast.LENGTH_LONG).show();
         });
         root.addView(test);
 
         Button export = new Button(this);
-        export.setText("导出诊断日志 (111.zip)");
+        export.setText(R.string.export_btn);
         export.setOnClickListener(v -> exportDiag());
         root.addView(export);
 
         setContentView(root);
+    }
+
+    private void updateLangBtn(Button btn) {
+        String code = Prefs.lang(this);
+        int nameId = "en".equals(code) ? R.string.lang_en
+                : "ru".equals(code) ? R.string.lang_ru : R.string.lang_zh;
+        btn.setText(getString(R.string.language_btn) + ": " + getString(nameId));
+    }
+
+    private void cycleLang() {
+        String cur = Prefs.lang(this);
+        final String next = "zh".equals(cur) ? "en" : "en".equals(cur) ? "ru" : "zh";
+        new Thread(() -> {
+            Prefs.putGlobal(Prefs.K_LANG, next);
+            runOnUiThread(this::recreate);
+        }).start();
     }
 
     private void requestRoot() {
@@ -99,12 +146,10 @@ public class MainActivity extends Activity {
             }
             final boolean granted = ok;
             runOnUiThread(() -> rootStatus.setText(granted
-                    ? "Root 状态：已授权 ✓"
-                    : "Root 状态：未授权 ✗（请在 Magisk 中允许）"));
+                    ? R.string.root_granted : R.string.root_denied));
         }).start();
     }
 
-    /** 从 /data/local/tmp 读诊断日志，打包为 111.zip 写入 Download */
     private void exportDiag() {
         new Thread(() -> {
             try {
@@ -140,11 +185,10 @@ public class MainActivity extends Activity {
                 out.close();
 
                 runOnUiThread(() -> Toast.makeText(this,
-                        "已导出 Download/111.zip（" + logData.length + " 字节）",
-                        Toast.LENGTH_LONG).show());
+                        R.string.export_ok, Toast.LENGTH_LONG).show());
             } catch (Throwable t) {
                 runOnUiThread(() -> Toast.makeText(this,
-                        "导出失败: " + t, Toast.LENGTH_LONG).show());
+                        R.string.export_fail, Toast.LENGTH_LONG).show());
             }
         }).start();
     }
