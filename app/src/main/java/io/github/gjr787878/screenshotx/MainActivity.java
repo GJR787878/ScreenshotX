@@ -119,7 +119,8 @@ public class MainActivity extends Activity {
     }
 
     private LinearLayout.LayoutParams marginLp(int l, int t, int r, int btm) {
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
+        // 宽度统一为 MATCH_PARENT，所有按钮等长；GlassCapsuleButton 内部文字居中
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
         lp.setMargins(l, t, r, btm);
         return lp;
     }
