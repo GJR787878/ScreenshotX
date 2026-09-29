@@ -8,6 +8,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.os.IBinder;
+import android.util.Log;
 
 import java.io.DataOutputStream;
 import java.text.SimpleDateFormat;
@@ -65,7 +66,7 @@ public class RecordService extends Service {
             recordOs.flush();
             recording = true;
             KeyInterceptor.setRecording(true);
-            HookLogic.log("recording started: " + outputPath);
+            android.util.Log.d("ScreenshotX", "recording started: " + outputPath);
 
             // 启动前台通知
             Notification notif = buildNotification("录屏中...");
@@ -76,7 +77,7 @@ public class RecordService extends Service {
             fi.setAction(FloatingRecordService.ACTION_SHOW);
             startService(fi);
         } catch (Throwable t) {
-            HookLogic.log("recording start failed: " + t);
+            android.util.Log.d("ScreenshotX", "recording start failed: " + t);
             recording = false;
             KeyInterceptor.setRecording(false);
             stopSelf();
@@ -101,7 +102,7 @@ public class RecordService extends Service {
         recordProc = null;
         recordOs = null;
 
-        HookLogic.log("recording stopped, saving: " + outputPath);
+        android.util.Log.d("ScreenshotX", "recording stopped, saving: " + outputPath);
 
         // 隐藏悬浮窗
         Intent fi = new Intent(this, FloatingRecordService.class);
@@ -120,9 +121,9 @@ public class RecordService extends Service {
                 os.flush();
                 chmod.waitFor();
                 MediaSaver.saveVideo(this, path);
-                HookLogic.log("video saved to gallery");
+                android.util.Log.d("ScreenshotX", "video saved to gallery");
             } catch (Throwable t) {
-                HookLogic.log("save video failed: " + t);
+                android.util.Log.d("ScreenshotX", "save video failed: " + t);
             }
         }).start();
 
