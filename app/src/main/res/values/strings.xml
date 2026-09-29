@@ -10,6 +10,8 @@
     <string name="trigger_header">Trigger method</string>
     <string name="trigger_keys">Button screenshot (Power + Volume Down)</string>
     <string name="trigger_three">Three-finger swipe down screenshot</string>
+    <string name="trigger_drm">Capture secure / DRM content (bypass FLAG_SECURE)</string>
+    <string name="drm_note">Removes the black screen of FLAG_SECURE windows. Hardware-protected video streams (Widevine L1 / secure decoder) still stay black and cannot be captured by any software.</string>
     <string name="language_btn">Language</string>
     <string name="lang_zh">中文</string>
     <string name="lang_en">English</string>
