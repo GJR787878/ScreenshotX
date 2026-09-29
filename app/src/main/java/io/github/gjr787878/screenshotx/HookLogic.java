@@ -191,7 +191,7 @@ public class HookLogic {
 
     /** 三指下滑专用震动：强度更高，弥补没有按键震动叠加的体感差异。 */
     public static void vibrateStrong(Context c) {
-        vibrate(c, 60L, 160);
+        vibrate(c, 80L, 220);
     }
 
     /** 通用震动入口，可自定义时长与振幅。 */
