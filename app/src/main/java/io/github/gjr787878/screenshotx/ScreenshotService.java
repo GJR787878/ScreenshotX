@@ -125,12 +125,15 @@ public class ScreenshotService extends Service {
     }
 
     private void doShoot() throws Throwable {
-        rootCmd("rm -f " + SHOT);
-        rootCmd("screencap -p " + SHOT);
-        rootCmd("chmod 666 " + SHOT);
-        // 抓拍后先悬浮预览（点击进编辑、超时自动存相册）；同进程内直接 startService
-        Intent fp = new Intent(this, FloatingPreviewService.class);
-        fp.putExtra("path", SHOT);
-        startService(fp);
+        // 关键修复：把 rm / screencap / chmod / am startservice 全部串在同一条 shell 命令里，
+        // 用 && 连接，确保 screencap 完整落盘后才启动浮窗服务。
+        // 旧实现是先 rootCmd 写 stdin（异步），再 Java 端 startService（同进程很快），
+        // 导致浮窗服务启动时 screencap 还没写完，读到的永远是上一次的旧文件。
+        String pkg = getPackageName();
+        rootCmd("rm -f " + SHOT
+                + " && screencap -p " + SHOT
+                + " && chmod 666 " + SHOT
+                + " && am startservice -n " + pkg + "/.FloatingPreviewService"
+                + " --es path " + SHOT);
     }
 }
