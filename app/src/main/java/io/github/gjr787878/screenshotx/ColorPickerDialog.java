@@ -37,11 +37,11 @@ public class ColorPickerDialog {
 
     public void show(){dialog.show();}
 
-    private TextView makeTab(String label){
+    private TextView makeTab(String label, final boolean ring){
         TextView t=new TextView(ctx);
         t.setText(label); t.setTextSize(15); t.setGravity(Gravity.CENTER);
         t.setPadding(dp(26),dp(9),dp(26),dp(9));
-        t.setOnClickListener(v->showMode(label.equals("色环")));
+        t.setOnClickListener(v->showMode(ring));
         return t;
     }
 
@@ -70,7 +70,7 @@ public class ColorPickerDialog {
 
         LinearLayout tabs=new LinearLayout(ctx);
         tabs.setGravity(Gravity.CENTER);
-        gridTab=makeTab("网格"); ringTab=makeTab("色环");
+        gridTab=makeTab(ctx.getString(R.string.picker_grid),false); ringTab=makeTab(ctx.getString(R.string.picker_ring),true);
         tabs.addView(gridTab); tabs.addView(box(dp(8),1)); tabs.addView(ringTab);
         styleTab(gridTab,false); styleTab(ringTab,true);
 
