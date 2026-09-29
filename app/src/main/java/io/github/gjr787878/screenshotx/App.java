@@ -1,6 +1,7 @@
 package io.github.gjr787878.screenshotx;
 
 import android.app.Application;
+import android.content.Context;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -13,6 +14,10 @@ import java.util.Date;
  * 便于事后导出真实堆栈，避免仅凭现象猜测。
  */
 public class App extends Application {
+
+    @Override protected void attachBaseContext(Context base) {
+        super.attachBaseContext(Lang.wrap(base));
+    }
 
     @Override public void onCreate() {
         super.onCreate();
