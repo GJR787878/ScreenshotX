@@ -348,7 +348,7 @@ public class FloatingPreviewService extends Service {
 
     private Bitmap decodeThumb(String path, int targetW) {
         try {
-            BitmapFactory.Options o = new Bitmap.BitmapFactory.Options = new BitmapFactory.Options();
+            BitmapFactory.Options o = new BitmapFactory.Options();
             o.inJustDecodeBounds = true;
             BitmapFactory.decodeFile(path, o);
             int sample = 1;
