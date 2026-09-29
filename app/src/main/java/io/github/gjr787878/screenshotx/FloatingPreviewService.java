@@ -25,8 +25,8 @@ import android.widget.ImageView;
 import android.widget.Toast;
 
 /**
- * 截屏悬浮预览：抓拍后在屏幕角落悬浮约 2 秒。
- * 点击悬浮图 → 进入编辑器；不点击 → 倒计时结束自动保存到相册。
+ * 截屏悬浮预览：抓拍后在屏幕角落悬浮 2 秒，随后 0.4 秒渐出并自动保存到相册。
+ * 点击悬浮图 → 进入编辑器；不点击 → 倒计时结束渐出并保存。
  * 悬浮窗不获取焦点（FLAG_NOT_FOCUSABLE），不打断当前应用，可在任意界面连续截图。
  *
  * 本服务不请求 Root：悬浮权限由 system_server 常驻 shell 预授权；
@@ -35,6 +35,7 @@ import android.widget.Toast;
 public class FloatingPreviewService extends Service {
 
     private static final long DURATION = 2000L;
+    private static final long FADE_OUT = 400L;
 
     private Handler main;
     private WindowManager wm;
@@ -182,7 +183,7 @@ public class FloatingPreviewService extends Service {
             @Override public void onAnimationEnd(Animator a) {
                 if (finished) return;
                 finished = true;
-                saveAndFinish(currentPath, g);
+                saveAndFadeOut(currentPath, g);
             }
         });
         animator.start();
@@ -208,6 +209,33 @@ public class FloatingPreviewService extends Service {
                 stopSelf();
             });
         }).start();
+    }
+
+    /** 超时：后台保存相册（与渐出并行），同时播放 0.4s 渐出，结束后按代际移除悬浮图。 */
+    private void saveAndFadeOut(final String path, final int g) {
+        new Thread(() -> {
+            boolean ok = false;
+            try {
+                MediaSaver.saveToGallery(FloatingPreviewService.this, path);
+                ok = true;
+            } catch (Throwable t) {
+                ok = false;
+            }
+            final boolean saved = ok;
+            main.post(() -> Toast.makeText(FloatingPreviewService.this,
+                    saved ? "已保存到相册" : "自动保存失败", Toast.LENGTH_SHORT).show());
+        }).start();
+        // 0.4 秒渐出：总停留 2 + 0.4 秒
+        if (root == null) return;
+        root.animate().cancel();
+        root.animate().alpha(0f).setDuration(FADE_OUT)
+                .setListener(new AnimatorListenerAdapter() {
+                    @Override public void onAnimationEnd(Animator a) {
+                        if (g != gen) return; // 已被新预览接管，旧视图已移除，不拆新视图
+                        teardownView();
+                        stopSelf();
+                    }
+                }).start();
     }
 
     private void openEditor(String path) {
