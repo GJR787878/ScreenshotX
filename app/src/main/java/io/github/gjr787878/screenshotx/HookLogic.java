@@ -313,7 +313,9 @@ public class HookLogic {
     private static Bitmap toSoftwareBitmap(Bitmap bmp) {
         if (bmp == null) return null;
         try {
-            if (bmp.isHardware()) {
+            // 不用 isHardware()/isSoftware()（会被 compileOnly 的旧 framework stub 遮蔽），
+            // 用最老的 getConfig() 判定 HARDWARE。
+            if (bmp.getConfig() == Bitmap.Config.HARDWARE) {
                 Bitmap sw = bmp.copy(Bitmap.Config.ARGB_8888, false);
                 if (sw != null) return sw;
             }
