@@ -4,6 +4,8 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:name=".App"
@@ -32,7 +34,12 @@
         <service
             android:name=".ScreenshotService"
             android:exported="true"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+            android:foregroundServiceType="specialUse"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Screenshot capture keep-alive and root fallback" />
+        </service>
 
         <service
             android:name=".FloatingPreviewService"
