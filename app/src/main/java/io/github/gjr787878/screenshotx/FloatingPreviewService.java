@@ -36,7 +36,7 @@ public class FloatingPreviewService extends Service {
 
     private static final long DURATION = 2000L;
 
-    private final Handler main = new Handler(getMainLooper());
+    private Handler main;
     private WindowManager wm;
     private View root;
     private View progressFill;
@@ -51,6 +51,9 @@ public class FloatingPreviewService extends Service {
 
     @Override public void onCreate() {
         super.onCreate();
+        // Handler 必须在 base Context attach 后（onCreate）初始化，
+        // 字段初始化时 getMainLooper() 会因 mBase 为 null 抛 NPE
+        main = new Handler(getMainLooper());
         wm = (WindowManager) getSystemService(WINDOW_SERVICE);
     }
 
