@@ -14,11 +14,9 @@ import android.graphics.Rect;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.IBinder;
-import android.os.ParcelFileDescriptor;
+import android.os.SharedMemory;
 import android.provider.Settings;
-import android.system.Os;
 import android.system.OsConstants;
-import android.system.StructStat;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewOutlineProvider;
@@ -65,9 +63,9 @@ public class FloatingPreviewService extends Service {
     @Override public int onStartCommand(Intent intent, int flags, int id) {
         try {
             if (intent != null) {
-                ParcelFileDescriptor pfd = intent.getParcelableExtra("shm");
+                SharedMemory shm = intent.getParcelableExtra("shm");
                 String path = intent.getStringExtra("path");
-                if (pfd != null) showShm(pfd);
+                if (shm != null) showShm(shm);
                 else if (path != null) show(path);
             }
         } catch (Throwable t) {
@@ -104,17 +102,17 @@ public class FloatingPreviewService extends Service {
     }
 
     /** 共享内存来源（SurfaceControl 直拍）：立即显示 Bitmap，后台落盘供保存/编辑。 */
-    private void showShm(final ParcelFileDescriptor pfd) {
+    private void showShm(final SharedMemory shm) {
         final Bitmap bmp;
         try {
-            bmp = parseShm(pfd);
+            bmp = parseShm(shm);
         } catch (Throwable t) {
-            try { pfd.close(); } catch (Throwable ignored) {}
+            try { shm.close(); } catch (Throwable ignored) {}
             teardownView();
             stopSelf();
             return;
         }
-        try { pfd.close(); } catch (Throwable ignored) {}
+        try { shm.close(); } catch (Throwable ignored) {}
 
         final int g;
         synchronized (this) { g = ++gen; }
@@ -301,15 +299,13 @@ public class FloatingPreviewService extends Service {
     }
 
     /** 从共享内存解析 Bitmap（mmap 只读，无需 SharedMemory 隐藏方法）。 */
-    private Bitmap parseShm(ParcelFileDescriptor pfd) throws Exception {
-        StructStat st = Os.fstat(pfd.getFileDescriptor());
-        long size = st.st_size;
-        ByteBuffer bb = Os.mmap(0, size, OsConstants.PROT_READ,
-                OsConstants.MAP_SHARED, pfd.getFileDescriptor(), 0);
+    private Bitmap parseShm(SharedMemory shm) throws Exception {
+        int size = shm.getSize();
+        ByteBuffer bb = shm.map(OsConstants.PROT_READ, 0, size);
         int w = bb.getInt(), h = bb.getInt(), bytes = bb.getInt();
         Bitmap bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         bmp.copyPixelsFromBuffer(bb);
-        Os.munmap(bb, size);
+        SharedMemory.unmap(bb);
         return bmp;
     }
 
