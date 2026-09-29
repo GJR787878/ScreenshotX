@@ -2,13 +2,21 @@ package io.github.gjr787878.screenshotx;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Bitmap;
+import android.graphics.Point;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.os.SharedMemory;
+import android.system.OsConstants;
 
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.InputStream;
+import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -28,6 +36,7 @@ public class HookLogic {
     private static final Handler OWN = new Handler(Looper.getMainLooper());
     private static boolean logInited = false;
     private static volatile boolean installed = false;
+    private static volatile boolean gestureInstalled = false;
     private static final Set<Class<?>> hookedHelperClasses =
             new java.util.concurrent.CopyOnWriteArraySet<>();
 
@@ -74,13 +83,15 @@ public class HookLogic {
             return;
         }
 
-        // 抓系统 Context
+        // 抓系统 Context，并在拿到后安装三指手势监视器
         try {
             Set<?> r = XposedBridge.hookAllMethods(pwm, "init", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     if (p.args.length > 0 && p.args[0] instanceof Context) {
-                        sysContext = (Context) p.args[0];
+                        Context c = (Context) p.args[0];
+                        sysContext = c;
                         log("init context captured");
+                        installGesture(c);
                     }
                 }
             });
@@ -89,14 +100,12 @@ public class HookLogic {
             log("init hook failed: " + t);
         }
 
-        // 触发点改为所有截屏的必经出口 ScreenshotHelper.takeScreenshot：
-        // 直接取消系统截屏、改走自有 root screencap，不依赖各 ROM 的组合键方法名。
+        // 按键截屏：hook ScreenshotHelper.takeScreenshot，受“按键截屏”开关控制
         try {
             Class<?> sh = XposedHelpers.findClass(
                     "com.android.internal.util.ScreenshotHelper", cl);
             hookScreenshotHelper(sh);
 
-            // 兼容 MIUI/HyperOS 等用子类重写：实例构造后按运行时真实类补 hook
             XposedBridge.hookAllConstructors(sh, new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     Class<?> runtime = p.thisObject.getClass();
@@ -108,21 +117,33 @@ public class HookLogic {
             log("ScreenshotHelper hook failed: " + t);
         }
 
-        // 开机后尽力预建常驻 Root shell（已授权则静默成功，首次触发即快）
+        // 开机后尽力预建常驻 Root shell（兜底路径用）
         new Thread(HookLogic::ensureDirectShell).start();
 
         installed = true;
         log("install: hooking done");
     }
 
-    /** 在指定类（基类或 ROM 子类）上 hook 截屏入口：取消系统截屏并触发自有抓拍。 */
+    private static synchronized void installGesture(Context c) {
+        if (gestureInstalled) return;
+        gestureInstalled = true;
+        GestureWatcher.install(c);
+    }
+
+    /** 在指定类（基类或 ROM 子类）上 hook 截屏入口：按键开关开启时取消系统截屏并自有抓拍。 */
     private static void hookScreenshotHelper(Class<?> cls) {
         if (!hookedHelperClasses.add(cls)) return;
         XC_MethodHook replace = new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam p) {
+                Context c = sysContext;
+                boolean keysOn = c == null ? true : Prefs.keys(c);
                 long now = System.currentTimeMillis();
                 boolean fire = (now - lastTrigger) > 1500;
                 lastTrigger = now;
+                if (!keysOn) {
+                    // 按键截屏已关闭：放行系统默认截屏，不拦截
+                    return;
+                }
                 p.setResult(null); // 取消系统截屏
                 log("intercepted " + p.method.getDeclaringClass().getSimpleName()
                         + "." + p.method.getName() + " fire=" + fire);
@@ -135,7 +156,10 @@ public class HookLogic {
                 + " takeScreenshot=" + a.size() + " takeScreenshotInternal=" + b.size());
     }
 
-    /** 兜底获取系统 Context：system_server 内通过 ActivityThread.getSystemContext()，不依赖 init hook 时机。 */
+    /** 供三指手势调用。 */
+    public static void requestShot() { fire(); }
+
+    /** 兜底获取系统 Context。 */
     private static Context resolveSystemContext() {
         try {
             ClassLoader cl = serverCl != null ? serverCl : ClassLoader.getSystemClassLoader();
@@ -153,30 +177,103 @@ public class HookLogic {
     }
 
     private static void fire() {
-        // 后台线程执行，避免阻塞 system_server 主线程
+        // 后台线程执行，避免阻塞 system_server 主线程；按速度分层兜底
         new Thread(() -> {
-            // 主路径：常驻 Root shell 抓拍，后台并发预热 App 进程，开机即快
-            if (rootShotPersistent()) return;
-
-            // 兜底：拉起 App 服务（App 已打开/Root 已授权时可靠）
-            Context c = sysContext;
-            if (c == null) c = resolveSystemContext();
-            if (c == null) {
-                log("fire skipped, no context");
-                return;
-            }
-            sysContext = c;
-            try {
-                Intent svc = new Intent();
-                svc.setClassName("io.github.gjr787878.screenshotx",
-                        "io.github.gjr787878.screenshotx.ScreenshotService");
-                svc.setAction(ScreenshotService.ACTION_SHOOT);
-                c.startService(svc);
-                log("fire sent (service fallback)");
-            } catch (Throwable t) {
-                log("fire failed: " + t);
-            }
+            if (surfaceShot()) return;          // 最快：SurfaceControl 直拍 + 共享内存
+            if (rootShotPersistent()) return;   // 其次：常驻 root shell + screencap
+            serviceFallback();                  // 最后：拉起 App 服务
         }).start();
+    }
+
+    /** 最快路径：system_server 内直接调 SurfaceControl 截图（毫秒级、无需 root），再经共享内存传给 App。 */
+    private static boolean surfaceShot() {
+        Context c = sysContext != null ? sysContext : resolveSystemContext();
+        if (c == null) return false;
+        sysContext = c;
+        try {
+            Point size = new Point();
+            c.getDisplay().getRealSize(size);
+            int w = size.x, h = size.y;
+            Class<?> sc = Class.forName("android.view.SurfaceControl");
+            Bitmap bmp = tryScreenshot(sc, w, h);
+            if (bmp == null) {
+                log("surface shot: no matching SurfaceControl.screenshot signature");
+                return false;
+            }
+            return deliverViaShm(c, bmp);
+        } catch (Throwable t) {
+            log("surface shot failed: " + t);
+            return false;
+        }
+    }
+
+    private static Bitmap tryScreenshot(Class<?> sc, int w, int h) {
+        try {
+            Method m = sc.getDeclaredMethod("screenshot", int.class, int.class);
+            Bitmap b = (Bitmap) m.invoke(null, w, h);
+            if (b != null) return b;
+        } catch (Throwable ignored) {}
+        try {
+            Method m = sc.getDeclaredMethod("screenshot",
+                    Rect.class, int.class, int.class, boolean.class, int.class);
+            Bitmap b = (Bitmap) m.invoke(null, new Rect(0, 0, w, h), w, h, false, 0);
+            if (b != null) return b;
+        } catch (Throwable ignored) {}
+        try {
+            Method m = sc.getDeclaredMethod("screenshot",
+                    Rect.class, int.class, int.class, int.class);
+            Bitmap b = (Bitmap) m.invoke(null, new Rect(0, 0, w, h), w, h, 0);
+            if (b != null) return b;
+        } catch (Throwable ignored) {}
+        return null;
+    }
+
+    /** 把 Bitmap 放入共享内存（ashmem，无 Binder 大小限制），启动 App 悬浮预览。 */
+    private static boolean deliverViaShm(Context c, Bitmap bmp) {
+        SharedMemory shm = null;
+        try {
+            int w = bmp.getWidth(), h = bmp.getHeight();
+            int bytes = bmp.getByteCount();
+            shm = SharedMemory.create("screenshotx-shot", bytes + 12);
+            ByteBuffer bb = shm.setReadWrite();
+            bb.putInt(w); bb.putInt(h); bb.putInt(bytes);
+            bmp.copyPixelsToBuffer(bb);
+            shm.setProtect(OsConstants.PROT_READ);
+            ParcelFileDescriptor pfd = ParcelFileDescriptor.dup(shm.getFd());
+            Intent i = new Intent();
+            i.setClassName("io.github.gjr787878.screenshotx",
+                    "io.github.gjr787878.screenshotx.FloatingPreviewService");
+            i.putExtra("shm", pfd);
+            c.startService(i);
+            log("surface shot delivered via shm " + w + "x" + h);
+            return true;
+        } catch (Throwable t) {
+            log("shm deliver failed: " + t);
+            return false;
+        } finally {
+            if (shm != null) { try { shm.close(); } catch (Throwable ignored) {} }
+        }
+    }
+
+    /** 最后兜底：拉起 App 的 ScreenshotService。 */
+    private static void serviceFallback() {
+        Context c = sysContext;
+        if (c == null) c = resolveSystemContext();
+        if (c == null) {
+            log("fire skipped, no context");
+            return;
+        }
+        sysContext = c;
+        try {
+            Intent svc = new Intent();
+            svc.setClassName("io.github.gjr787878.screenshotx",
+                    "io.github.gjr787878.screenshotx.ScreenshotService");
+            svc.setAction(ScreenshotService.ACTION_SHOOT);
+            c.startService(svc);
+            log("fire sent (service fallback)");
+        } catch (Throwable t) {
+            log("fire failed: " + t);
+        }
     }
 
     private static void drainStatic(InputStream is) {
@@ -196,7 +293,6 @@ public class HookLogic {
             rootShellOs = new DataOutputStream(rootShellProc.getOutputStream());
             drainStatic(rootShellProc.getInputStream());
             drainStatic(rootShellProc.getErrorStream());
-            // 预授权悬浮窗权限，使抓拍后的悬浮预览可直接展示
             rootShellOs.writeBytes("appops set io.github.gjr787878.screenshotx"
                     + " SYSTEM_ALERT_WINDOW allow\n");
             rootShellOs.flush();
@@ -208,7 +304,7 @@ public class HookLogic {
         }
     }
 
-    /** 通过常驻 Root shell 抓拍：后台并发预热 App 进程，抓拍完再启动编辑器（进程已就绪）。 */
+    /** 通过常驻 Root shell 抓拍。 */
     private static boolean rootShotPersistent() {
         final String shot = "/data/local/tmp/screenshotx_shot.png";
         if (!ensureDirectShell()) {
@@ -221,12 +317,10 @@ public class HookLogic {
                 os = rootShellOs;
             }
             if (os == null) return false;
-            // 后台预热 App 进程（无界面），与抓拍并发，缩短随后悬浮预览/编辑器冷启动
             os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService &\n");
             os.writeBytes("rm -f " + shot + "\n");
             os.writeBytes("screencap -p " + shot + "\n");
             os.writeBytes("chmod 666 " + shot + "\n");
-            // 抓拍后先在角落悬浮预览（点击进编辑、超时自动存相册），不再直接打开编辑器
             os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.FloatingPreviewService"
                     + " --es path " + shot + "\n");
             os.flush();
