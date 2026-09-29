@@ -16,4 +16,6 @@
     <string name="lang_ru">Русский</string>
     <string name="saved">已保存到相册</string>
     <string name="save_failed">自动保存失败</string>
+    <string name="export_ok">已导出 Download/111.zip</string>
+    <string name="export_fail">导出失败</string>
 </resources>
