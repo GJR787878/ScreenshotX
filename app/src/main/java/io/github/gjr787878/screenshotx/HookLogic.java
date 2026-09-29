@@ -139,7 +139,13 @@ public class HookLogic {
                         Method getAction = keyEv.getClass().getMethod("getAction");
                         int keyCode = (int) getKeyCode.invoke(keyEv);
                         int action = (int) getAction.invoke(keyEv);
-                        KeyInterceptor.onKeyEvent(keyCode, action);
+                        // 返回 true 表示拦截该事件，不让系统继续处理
+                        boolean intercept = KeyInterceptor.onKeyEvent(keyCode, action);
+                        if (intercept) {
+                            // interceptKeyBeforeQueueing 返回 0 = 不向用户分发该事件
+                            p.setResult(0);
+                            log("intercepted key: code=" + keyCode + " action=" + action);
+                        }
                     } catch (Throwable t) {
                         log("key event hook failed: " + t);
                     }
