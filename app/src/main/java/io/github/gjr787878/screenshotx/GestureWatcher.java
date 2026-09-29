@@ -125,6 +125,7 @@ public class GestureWatcher {
             long now = System.currentTimeMillis();
             if (now - lastFire > COOLDOWN) {
                 lastFire = now;
+                HookLogic.vibrate(ctx); // 立刻震动反馈
                 HookLogic.log("three-finger swipe detected, request shot");
                 HookLogic.requestShot();
             }
