@@ -18,4 +18,27 @@
     <string name="save_failed">Не удалось сохранить</string>
     <string name="export_ok">Экспортировано в Download/111.zip</string>
     <string name="export_fail">Ошибка экспорта</string>
+    <string name="pen_ball">Шарик</string>
+    <string name="pen_marker">Маркер</string>
+    <string name="pen_pencil">Карандаш</string>
+    <string name="pen_fountain">Перо</string>
+    <string name="pen_eraser">Ластик</string>
+    <string name="share">Поделиться</string>
+    <string name="mode_mark">Разметка</string>
+    <string name="mode_mosaic">Мозаика</string>
+    <string name="mode_crop">Кадр</string>
+    <string name="width">Толщина</string>
+    <string name="mos_pixel">Пиксели</string>
+    <string name="mos_blur">Размытие</string>
+    <string name="mos_black">Чёрная</string>
+    <string name="mos_paint">Кисть</string>
+    <string name="mos_rect">Рамка</string>
+    <string name="ratio">Пропорции</string>
+    <string name="ratio_free">Свободно</string>
+    <string name="cancel">Отмена</string>
+    <string name="apply_crop">Применить</string>
+    <string name="cropped">Обрезано</string>
+    <string name="saving">Сохранение…</string>
+    <string name="saved_to">Сохранено в Pictures/Screenshots</string>
+    <string name="save_fail_prefix">Ошибка: </string>
 </resources>
