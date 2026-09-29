@@ -59,7 +59,7 @@ public class MainActivity extends Activity {
         rootStatus.setPadding(0, dp(12), 0, dp(12));
         root.addView(rootStatus);
         requestRoot();
-        try { startService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
+        try { startForegroundService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
 
         // 触发方式
         TextView trigHeader = new TextView(this);
