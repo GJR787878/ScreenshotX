@@ -43,4 +43,7 @@
     <string name="save_fail_prefix">保存失败: </string>
     <string name="picker_grid">网格</string>
     <string name="picker_ring">色环</string>
+    <string name="notif_channel">保活服务</string>
+    <string name="notif_text">截屏捕获服务运行中</string>
 </resources>
+
