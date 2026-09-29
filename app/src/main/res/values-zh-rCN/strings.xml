@@ -3,7 +3,7 @@
     <string name="root_checking">Root 状态：检测中…</string>
     <string name="root_granted">Root 状态：已授权 ✓</string>
     <string name="root_denied">Root 状态：未授权 ✗（请在 Magisk 中允许）</string>
-    <string name="usage">使用方法：\n1. 打开本 App，在 Magisk 弹窗中授予 Root 权限\n2. 在 LSPosed 中启用本模块\n3. 作用域勾选「系统框架」(system)\n4. 重启手机（或重启系统框架）\n5. 按 电源键+音量下 截屏\n\n下面按钮可测试 Root 截屏是否可用：</string>
+    <string name="usage">使用方法：\n1. 打开本 App，在 Magisk 弹窗中授予 Root 权限\n2. 在 LSPosed 中启用本模块\n3. 作用域勾选「系统框架」(system)\n4. 重启手机（或重启系统框架）\n5. 按 电源键+音量下，或三指下滑（可在下方分别开关）\n\n抓拍后会出现悬浮预览：点击可编辑，2.4 秒后自动保存；触发时会短震动提示。\n\n下面按钮可测试抓拍是否可用：</string>
     <string name="test_btn">测试截屏</string>
     <string name="test_hint">若已授权 Root，将打开编辑器</string>
     <string name="export_btn">导出诊断日志 (111.zip)</string>
