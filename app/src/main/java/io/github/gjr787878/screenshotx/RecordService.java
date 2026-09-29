@@ -95,7 +95,7 @@ public class RecordService extends Service {
         if (!recording) return;
         recording = false;
         KeyInterceptor.setRecording(false);
-        // 保存到相册（后台线程）
+        final String path = outputPath;
         final Process oldProc = recordProc;
         final DataOutputStream oldOs = recordOs;
         recordProc = null;
@@ -134,7 +134,6 @@ public class RecordService extends Service {
 
         android.util.Log.d("ScreenshotX", "recording stopped, saving: " + path);
 
-        // 保存到相册（后台线程）
         // 保存到相册（后台线程）
         new Thread(() -> {
             try {
