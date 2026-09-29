@@ -43,4 +43,7 @@
     <string name="save_fail_prefix">Ошибка: </string>
     <string name="picker_grid">Сетка</string>
     <string name="picker_ring">Кольцо</string>
+    <string name="notif_channel">Фоновая служба</string>
+    <string name="notif_text">Служба создания скриншотов работает</string>
 </resources>
+
