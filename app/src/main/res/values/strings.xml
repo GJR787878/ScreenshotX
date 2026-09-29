@@ -3,7 +3,7 @@
     <string name="root_checking">Root status: checking…</string>
     <string name="root_granted">Root status: granted ✓</string>
     <string name="root_denied">Root status: denied ✗ (allow in Magisk)</string>
-    <string name="usage">How to use:\n1. Open this app, grant Root in the Magisk prompt\n2. Enable this module in LSPosed\n3. Check \"System framework\" (system) in scope\n4. Reboot your phone (or restart the system framework)\n5. Press Power + Volume Down to screenshot\n\nUse the button below to test if Root capture works:</string>
+    <string name="usage">How to use:\n1. Open this app, grant Root in the Magisk prompt\n2. Enable this module in LSPosed\n3. Check \"System framework\" (system) in scope\n4. Reboot your phone (or restart the system framework)\n5. Press Power + Volume Down, or swipe down with three fingers (toggle each below)\n\nAfter capturing, a floating preview appears — tap it to edit, or it auto-saves after 2.4 s. A short vibration confirms the trigger.\n\nUse the button below to test capture:</string>
     <string name="test_btn">Test screenshot</string>
     <string name="test_hint">If Root is granted, the editor will open</string>
     <string name="export_btn">Export diagnostic log (111.zip)</string>
