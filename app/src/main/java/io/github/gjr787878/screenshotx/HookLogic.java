@@ -101,6 +101,7 @@ public class HookLogic {
                         sysContext = c;
                         log("init context captured");
                         installGesture(c);
+                        registerAudioReceiver(c);
                     }
                 }
             });
@@ -277,6 +278,28 @@ public class HookLogic {
      * 注意：仅对 FLAG_SECURE 有效；硬件级 Widevine L1 / secure decoder 的帧在
      * TrustZone 受保护缓冲中，不进普通内存，软件无法截取。
      */
+    /** 注册广播：app 进程（RecordService）停止录屏后通知 system_server 停音频录制。 */
+    private static void registerAudioReceiver(Context ctx) {
+        try {
+            android.content.BroadcastReceiver r = new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, android.content.Intent i) {
+                    SystemAudioRecorder.stop();
+                }
+            };
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                ctx.registerReceiver(r,
+                        new android.content.IntentFilter("io.github.gjr787878.screenshotx.STOP_AUDIO"),
+                        android.content.Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                ctx.registerReceiver(r,
+                        new android.content.IntentFilter("io.github.gjr787878.screenshotx.STOP_AUDIO"));
+            }
+            log("audio stop receiver registered");
+        } catch (Throwable t) {
+            log("audio receiver failed: " + t);
+        }
+    }
+
     private static void installSecureBypass() {
         if (secureInstalled) return;
 
