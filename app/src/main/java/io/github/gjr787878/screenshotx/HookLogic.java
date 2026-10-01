@@ -214,6 +214,22 @@ public class HookLogic {
             log("power key down hook failed: " + t);
         }
 
+        // 拦截电源长按处理本身（crDroid 长按定时器到点后走 powerLongPress）
+        try {
+            XposedBridge.hookAllMethods(pwm, "powerLongPress",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (KeyInterceptor.isRecording() || KeyInterceptor.comboActive()) {
+                        p.setResult(null);
+                        log("power long press intercepted");
+                    }
+                }
+            });
+            log("powerLongPress hooked");
+        } catch (Throwable t) {
+            log("power long press hook failed: " + t);
+        }
+
         // 按键截屏：hook ScreenshotHelper.takeScreenshot，受“按键截屏”开关控制
         try {
             Class<?> sh = XposedHelpers.findClass(
