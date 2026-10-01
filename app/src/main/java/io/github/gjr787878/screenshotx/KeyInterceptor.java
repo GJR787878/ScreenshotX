@@ -60,7 +60,6 @@ public class KeyInterceptor {
                 if (down) {
                     powerDown = true;
                     powerDownTime = System.currentTimeMillis();
-                    lastPowerDownTime = powerDownTime;
                     comboTriggered = false;
                     // 录屏期间，电源键按下：拦截，不锁屏
                     if (recording) {
@@ -131,6 +130,13 @@ public class KeyInterceptor {
             if (now - comboTime < COMBO_INTERCEPT_WINDOW) return true;
         }
         return false;
+    }
+
+    /** 实时判断"电源+音量上"组合意图：组合进行中（两键同按）或已触发录屏。
+     *  供系统组合键管理器（静音切换等）消费拦截用。 */
+    public static boolean isComboIntent() {
+        if (comboTriggered) return true;
+        return powerDown && volUpDown;
     }
 
     /** 组合键是否处于触发后的拦截窗口内（供电源菜单/长按拦截用）。 */
