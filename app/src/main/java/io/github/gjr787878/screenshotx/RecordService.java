@@ -60,16 +60,17 @@ public class RecordService extends Service {
             // 启动常驻 root shell 录屏
             recordProc = Runtime.getRuntime().exec("su");
             recordOs = new DataOutputStream(recordProc.getOutputStream());
-            // screenrecord 参数：竖屏、4Mbps、最长 30 分钟
-            // 先杀掉所有旧的 screenrecord 进程，避免残留导致发热
+            // 先杀掉所有旧的 screenrecord 进程和 PID 文件
             recordOs.writeBytes("pkill -f screenrecord\n");
+            recordOs.writeBytes("rm -f /data/local/tmp/sx_rec.pid\n");
             recordOs.flush();
-            // screenrecord 前台运行（不加 &），这样 Ctrl+C 才能正确停止
-            // 码率降到 2Mbps，分辨率 720p，减少发热和卡顿
+            // screenrecord 后台运行并记录 PID。
+            // 停止时用 kill -2 (SIGINT) 让它正常收尾写入 mp4 索引（moov atom），
+            // 这样文件才能被播放器打开。直接 pkill/SIGTERM 会损坏文件。
             int bitrate = Prefs.recBitrate(this);
             recordOs.writeBytes("screenrecord --bit-rate " + bitrate
                     + " --size 720x1280 --time-limit 1800 "
-                    + outputPath + "\n");
+                    + outputPath + " & echo $! > /data/local/tmp/sx_rec.pid\n");
             recordOs.flush();
             recording = true;
             KeyInterceptor.setRecording(true);
@@ -109,25 +110,22 @@ public class RecordService extends Service {
         // 后台线程做杀进程和保存文件，不阻塞主线程
         new Thread(() -> {
             try {
-                // 1. Ctrl+C 优雅停止
-                if (oldOs != null) {
-                    try { oldOs.write(3); oldOs.flush(); } catch (Throwable ignored) {}
+                // 1. 用 SIGINT (kill -2) 让 screenrecord 正常收尾，写入 mp4 索引
+                runSu("kill -2 $(cat /data/local/tmp/sx_rec.pid 2>/dev/null) 2>/dev/null");
+                // 2. 等待最多 3 秒让 screenrecord 写完 moov atom
+                for (int i = 0; i < 30; i++) {
+                    try { Thread.sleep(100); } catch (Throwable ignored) {}
                 }
-                // 2. 等 500ms 让 screenrecord 写完文件
-                try { Thread.sleep(500); } catch (Throwable ignored) {}
-                // 3. 兜底 pkill
-                try {
-                    Process killP = Runtime.getRuntime().exec("su");
-                    DataOutputStream killOs = new DataOutputStream(killP.getOutputStream());
-                    killOs.writeBytes("pkill -f screenrecord\n");
-                    killOs.writeBytes("exit\n");
-                    killOs.flush();
-                    killP.waitFor();
-                    killP.destroy();
-                } catch (Throwable ignored) {}
-                // 4. 销毁旧进程
+                // 3. 兜底：再发一次 SIGINT，然后 SIGTERM
+                runSu("kill -2 $(cat /data/local/tmp/sx_rec.pid 2>/dev/null) 2>/dev/null");
+                try { Thread.sleep(1000); } catch (Throwable ignored) {}
+                runSu("pkill -f screenrecord");
+                // 4. 销毁旧 su 进程
                 if (oldProc != null) {
                     try { oldProc.destroy(); } catch (Throwable ignored) {}
+                }
+                if (oldOs != null) {
+                    try { oldOs.close(); } catch (Throwable ignored) {}
                 }
             } catch (Throwable ignored) {}
         }).start();
@@ -153,6 +151,19 @@ public class RecordService extends Service {
 
         stopForeground(true);
         stopSelf();
+    }
+
+    /** 用独立的 su 进程执行一条命令，并等待完成。 */
+    private static void runSu(String cmd) {
+        try {
+            Process p = Runtime.getRuntime().exec("su");
+            DataOutputStream os = new DataOutputStream(p.getOutputStream());
+            os.writeBytes(cmd + "\n");
+            os.writeBytes("exit\n");
+            os.flush();
+            p.waitFor();
+            p.destroy();
+        } catch (Throwable ignored) {}
     }
 
     private void createChannel() {
