@@ -15,6 +15,7 @@ public class Prefs {
     public static final String K_DRM = "screenshotx_drm";          // 截取受保护/DRM 内容
     public static final String K_LANG = "screenshotx_lang";        // zh / en / ru
     public static final String K_REC_BITRATE = "screenshotx_rec_bitrate"; // 录屏码率（bps）
+    public static final String K_REC_AUDIO = "screenshotx_rec_audio";   // 录制系统声音（1=开）
 
     public static boolean keys(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_KEYS, 1) == 1; }
@@ -36,6 +37,12 @@ public class Prefs {
     public static int recBitrate(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_REC_BITRATE, 2000000); }
         catch (Throwable t) { return 2000000; }
+    }
+
+    /** 是否录制系统声音（内录），默认开启。 */
+    public static boolean recAudio(Context c) {
+        try { return Settings.Global.getInt(c.getContentResolver(), K_REC_AUDIO, 1) == 1; }
+        catch (Throwable t) { return true; }
     }
 
     /** 语言代码，默认简中。 */
