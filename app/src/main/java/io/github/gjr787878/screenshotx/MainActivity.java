@@ -277,6 +277,35 @@ public class MainActivity extends Activity {
         note.setPadding(dp(2), dp(12), dp(2), dp(8));
         inner.addView(note);
 
+        // 录制系统声音开关
+        TextView audioTitle = new TextView(this);
+        audioTitle.setText("录制系统声音");
+        audioTitle.setTextColor(0xFFFFFFFF);
+        audioTitle.setTextSize(15);
+        audioTitle.setPadding(0, dp(8), 0, dp(4));
+        inner.addView(audioTitle);
+
+        final GlassCapsuleButton audioBtn = new GlassCapsuleButton(this);
+        boolean audioOn = Prefs.recAudio(this);
+        audioBtn.setText(audioOn ? "录制系统声音：开" : "录制系统声音：关");
+        audioBtn.setGlassSelected(audioOn);
+        audioBtn.setOnClickListener(v -> {
+            boolean nv = !Prefs.recAudio(this);
+            final String val = nv ? "1" : "0";
+            new Thread(() -> Prefs.putGlobal(Prefs.K_REC_AUDIO, val)).start();
+            audioBtn.setText(nv ? "录制系统声音：开" : "录制系统声音：关");
+            audioBtn.setGlassSelected(nv);
+        });
+        inner.addView(audioBtn, marginLp(0, dp(4), 0, dp(4)));
+
+        TextView audioNote = new TextView(this);
+        audioNote.setText("开启后录屏会同时录制手机内部声音（媒体/游戏）。部分机型内录需要系统支持，若录到无声可关闭。");
+        audioNote.setTextColor(0xFF999999);
+        audioNote.setTextSize(12);
+        audioNote.setLineSpacing(dp(2), 1f);
+        audioNote.setPadding(dp(2), dp(12), dp(2), dp(8));
+        inner.addView(audioNote);
+
         sv.addView(inner);
         ll.addView(sv);
         return ll;
