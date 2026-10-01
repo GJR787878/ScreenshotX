@@ -8,6 +8,9 @@ import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SharedMemory;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.system.OsConstants;
@@ -660,6 +663,10 @@ public class HookLogic {
         }
         sysContext = c;
         try {
+            // 录制系统声音（REMOTE_SUBMIX 需要 system 权限，只能在 system_server 录）
+            if (Prefs.recAudio(c)) {
+                SystemAudioRecorder.start(c);
+            }
             Intent svc = new Intent();
             svc.setClassName("io.github.gjr787878.screenshotx",
                     "io.github.gjr787878.screenshotx.RecordService");
@@ -678,6 +685,8 @@ public class HookLogic {
         if (c == null) c = resolveSystemContext();
         if (c == null) return;
         try {
+            // 电源键停止路径：先停音频录制（悬浮窗停止路径由 RecordService 发广播触发）
+            SystemAudioRecorder.stop();
             Intent svc = new Intent();
             svc.setClassName("io.github.gjr787878.screenshotx",
                     "io.github.gjr787878.screenshotx.RecordService");
@@ -686,6 +695,83 @@ public class HookLogic {
             log("recording stop sent");
         } catch (Throwable t) {
             log("stopRecording failed: " + t);
+        }
+    }
+
+    /** system_server 内录制系统声音（REMOTE_SUBMIX）。app 进程无 CAPTURE_AUDIO_OUTPUT
+     *  权限，只能在 system_server 录。PCM 写入 /data/local/tmp/sx_audio.pcm，
+     *  由 RecordService 编码 AAC 后与 screenrecord 视频合并。 */
+    private static class SystemAudioRecorder {
+        private static volatile AudioRecord record;
+        private static volatile boolean running = false;
+        private static volatile Thread writeThread;
+        private static final String PCM_PATH = "/data/local/tmp/sx_audio.pcm";
+
+        static synchronized void start(Context ctx) {
+            if (running) return;
+            try {
+                int sampleRate = 44100;
+                int minBuf = AudioRecord.getMinBufferSize(sampleRate,
+                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
+                int bufSize = Math.max(minBuf * 2, 8192);
+                AudioRecord ar = new AudioRecord(MediaRecorder.AudioSource.REMOTE_SUBMIX,
+                        sampleRate, AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT, bufSize);
+                if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
+                    try { ar.release(); } catch (Throwable ignored) {}
+                    log("audio: REMOTE_SUBMIX init failed");
+                    return;
+                }
+                record = ar;
+                ar.startRecording();
+                running = true;
+                final int bs = bufSize;
+                writeThread = new Thread(() -> {
+                    byte[] buf = new byte[bs];
+                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(PCM_PATH)) {
+                        while (running) {
+                            int n = record.read(buf, 0, buf.length);
+                            if (n > 0) fos.write(buf, 0, n);
+                            else if (n < 0) break;
+                        }
+                        fos.flush();
+                    } catch (Throwable t) {
+                        log("audio: write failed " + t);
+                    }
+                }, "sx-audio-rec");
+                writeThread.start();
+                log("audio: system audio recording started (REMOTE_SUBMIX)");
+            } catch (Throwable t) {
+                log("audio: start failed " + t);
+                try { if (record != null) record.release(); } catch (Throwable ignored) {}
+                record = null;
+                running = false;
+            }
+        }
+
+        static synchronized void stop() {
+            if (!running && record == null) return;
+            running = false;
+            try { if (record != null) record.stop(); } catch (Throwable ignored) {}
+            try { if (writeThread != null) writeThread.join(2000); } catch (Throwable ignored) {}
+            try { if (record != null) record.release(); } catch (Throwable ignored) {}
+            record = null;
+            writeThread = null;
+            // 让 app 进程可读音频文件
+            runSu("chmod 666 " + PCM_PATH);
+            log("audio: system audio recording stopped");
+        }
+
+        private static void runSu(String cmd) {
+            try {
+                Process p = Runtime.getRuntime().exec("su");
+                DataOutputStream os = new DataOutputStream(p.getOutputStream());
+                os.writeBytes(cmd + "\n");
+                os.writeBytes("exit\n");
+                os.flush();
+                p.waitFor();
+                p.destroy();
+            } catch (Throwable ignored) {}
         }
     }
 }
