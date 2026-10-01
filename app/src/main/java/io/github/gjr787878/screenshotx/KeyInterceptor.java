@@ -14,12 +14,13 @@ public class KeyInterceptor {
     private static volatile boolean volUpDown = false;
     private static volatile boolean powerDown = false;
     private static long powerDownTime = 0;
+    private static long lastPowerDownTime = 0;
     private static volatile boolean comboTriggered = false;
     private static long comboTime = 0;
     private static volatile boolean pendingPowerUpFromCombo = false;
     private static volatile long recordingStartTime = 0;
 
-    private static final long COMBO_TIMEOUT = 800;
+    private static final long COMBO_TIMEOUT = 1500;
     private static final long POWER_SINGLE_TIMEOUT = 400;
     private static final long RECORD_STABLE_DELAY = 1000;
     // 组合键触发后，短时间内继续拦截电源/音量上事件（防系统默认功能）
@@ -38,7 +39,12 @@ public class KeyInterceptor {
             case KeyEvent.KEYCODE_VOLUME_UP:
                 if (down) {
                     volUpDown = true;
-                    if (powerDown && !comboTriggered) {
+                    // 电源键按下过（或 1.5s 窗口内）→ 拦截音量上事件，
+                    // 防止 crDroid 把 电源+音量上 当成"切换震动模式"默认功能。
+                    // 即使本次组合键没触发录屏，也不让系统功能执行。
+                    long nowV = System.currentTimeMillis();
+                    if (powerDown || (lastPowerDownTime > 0
+                            && nowV - lastPowerDownTime < COMBO_TIMEOUT)) {
                         intercept = true;
                     }
                 } else if (up) {
@@ -55,9 +61,22 @@ public class KeyInterceptor {
                 if (down) {
                     powerDown = true;
                     powerDownTime = System.currentTimeMillis();
+                    lastPowerDownTime = powerDownTime;
                     comboTriggered = false;
                     // 录屏期间，电源键按下：拦截，不锁屏
                     if (recording) {
+                        intercept = true;
+                    }
+                    // 音量上已按下：立即触发录屏，并拦截电源 down
+                    // （防止系统把电源键当普通唤醒/长按处理）
+                    if (volUpDown && !recording && !comboTriggered) {
+                        HookLogic.log("volup+power combo detected (reverse), start recording");
+                        HookLogic.startRecording();
+                        recording = true;
+                        comboTriggered = true;
+                        comboTime = System.currentTimeMillis();
+                        recordingStartTime = System.currentTimeMillis();
+                        pendingPowerUpFromCombo = true;
                         intercept = true;
                     }
                 } else if (up) {
