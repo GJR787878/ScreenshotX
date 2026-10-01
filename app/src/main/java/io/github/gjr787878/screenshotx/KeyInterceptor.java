@@ -14,7 +14,7 @@ public class KeyInterceptor {
     private static volatile boolean volUpDown = false;
     private static volatile boolean powerDown = false;
     private static long powerDownTime = 0;
-    private static long lastPowerDownTime = 0;
+    private static long volUpDownTime = 0;
     private static volatile boolean comboTriggered = false;
     private static long comboTime = 0;
     private static volatile boolean pendingPowerUpFromCombo = false;
@@ -39,12 +39,11 @@ public class KeyInterceptor {
             case KeyEvent.KEYCODE_VOLUME_UP:
                 if (down) {
                     volUpDown = true;
-                    // 电源键按下过（或 1.5s 窗口内）→ 拦截音量上事件，
+                    volUpDownTime = System.currentTimeMillis();
+                    // 仅当电源键【当前仍按住】（组合键操作中）才拦截音量上，
                     // 防止 crDroid 把 电源+音量上 当成"切换震动模式"默认功能。
-                    // 即使本次组合键没触发录屏，也不让系统功能执行。
-                    long nowV = System.currentTimeMillis();
-                    if (powerDown || (lastPowerDownTime > 0
-                            && nowV - lastPowerDownTime < COMBO_TIMEOUT)) {
+                    // 电源键松开后的正常音量调节不受影响。
+                    if (powerDown) {
                         intercept = true;
                     }
                 } else if (up) {
@@ -67,9 +66,11 @@ public class KeyInterceptor {
                     if (recording) {
                         intercept = true;
                     }
-                    // 音量上已按下：立即触发录屏，并拦截电源 down
-                    // （防止系统把电源键当普通唤醒/长按处理）
-                    if (volUpDown && !recording && !comboTriggered) {
+                    // 音量上已按下（1s 内）：立即触发录屏，并拦截电源 down
+                    // （防止系统把电源键当普通唤醒/长按处理；
+                    //   长按音量连续调节超 1s 后按电源不算组合键，避免误触发）
+                    if (volUpDown && !recording && !comboTriggered
+                            && System.currentTimeMillis() - volUpDownTime < 1000) {
                         HookLogic.log("volup+power combo detected (reverse), start recording");
                         HookLogic.startRecording();
                         recording = true;
