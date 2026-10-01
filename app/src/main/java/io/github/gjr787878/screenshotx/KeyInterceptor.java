@@ -45,7 +45,8 @@ public class KeyInterceptor {
                     volUpDown = false;
                     if (comboTriggered) {
                         intercept = true;
-                        comboTriggered = false;
+                        // 不立即重置 comboTriggered：保留 2 秒拦截窗口，
+                        // 期间持续拦截电源/音量上事件（防 crDroid 震动切换等）
                     }
                 }
                 break;
@@ -114,8 +115,10 @@ public class KeyInterceptor {
 
     /** 组合键是否处于触发后的拦截窗口内（供电源菜单/长按拦截用）。 */
     public static boolean comboActive() {
+        long now = System.currentTimeMillis();
+        if (comboTime > 0 && now - comboTime < COMBO_INTERCEPT_WINDOW) return true;
         return comboTriggered
-                && (System.currentTimeMillis() - comboTime < COMBO_INTERCEPT_WINDOW);
+                && (now - comboTime < COMBO_INTERCEPT_WINDOW);
     }
 
     public static boolean isRecording() {
