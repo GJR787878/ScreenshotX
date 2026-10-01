@@ -156,6 +156,64 @@ public class HookLogic {
             log("key hook failed: " + t);
         }
 
+        // 拦截分发阶段：interceptKeyBeforeDispatching 返回 -1 表示拦截，不分发到应用。
+        // 用于在组合键触发后的 2 秒窗口内，阻止系统把电源/音量上事件分发给
+        // 上层（crDroid 的震动切换、长按电源菜单等默认功能在这一层或更早处理）。
+        try {
+            XposedBridge.hookAllMethods(pwm, "interceptKeyBeforeDispatching",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        Object keyEv = p.args.length > 1 ? p.args[1] : null;
+                        if (keyEv == null) return;
+                        Method getKeyCode = keyEv.getClass().getMethod("getKeyCode");
+                        int keyCode = (int) getKeyCode.invoke(keyEv);
+                        if (KeyInterceptor.shouldInterceptDispatching(keyCode)) {
+                            p.setResult(-1);
+                            log("dispatch intercepted: code=" + keyCode);
+                        }
+                    } catch (Throwable t) {
+                        log("key dispatch hook failed: " + t);
+                    }
+                }
+            });
+            log("interceptKeyBeforeDispatching hooked");
+        } catch (Throwable t) {
+            log("key dispatch hook install failed: " + t);
+        }
+
+        // 拦截电源菜单（长按电源键弹出的关机/重启面板）
+        try {
+            XposedBridge.hookAllMethods(pwm, "showGlobalActionsInternal",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (KeyInterceptor.isRecording() || KeyInterceptor.comboActive()) {
+                        p.setResult(null);
+                        log("global actions intercepted");
+                    }
+                }
+            });
+            log("showGlobalActionsInternal hooked");
+        } catch (Throwable t) {
+            log("global actions hook failed: " + t);
+        }
+
+        // 拦截电源键按下处理（长按检测入口），录屏/组合键窗口内直接吞掉
+        try {
+            XposedBridge.hookAllMethods(pwm, "interceptPowerKeyDown",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (KeyInterceptor.isRecording() || KeyInterceptor.comboActive()) {
+                        p.setResult(null);
+                        log("power key down intercepted");
+                    }
+                }
+            });
+            log("interceptPowerKeyDown hooked");
+        } catch (Throwable t) {
+            log("power key down hook failed: " + t);
+        }
+
         // 按键截屏：hook ScreenshotHelper.takeScreenshot，受“按键截屏”开关控制
         try {
             Class<?> sh = XposedHelpers.findClass(
