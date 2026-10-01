@@ -160,6 +160,51 @@ public class HookLogic {
             log("key hook failed: " + t);
         }
 
+        // 系统组合键管理器：Android 12+ 的 电源+音量上=静音切换、电源+音量下=截屏等
+        // 组合键在 KeyCombinationManager 里处理。电源+音量上组合意图期间直接消费事件，
+        // 阻止系统执行静音/震动切换等默认功能。
+        try {
+            Class<?> kcm = XposedHelpers.findClass(
+                    "com.android.server.policy.KeyCombinationManager", cl);
+            XposedBridge.hookAllMethods(kcm, "interceptKey",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        if (KeyInterceptor.isComboIntent()) {
+                            // 返回 true = 组合键已被消费，系统不再触发静音切换等默认功能
+                            p.setResult(true);
+                            log("key combination consumed (silent/others blocked)");
+                        }
+                    } catch (Throwable t) {
+                        log("kcm hook failed: " + t);
+                    }
+                }
+            });
+            log("KeyCombinationManager hooked");
+        } catch (Throwable t) {
+            log("KeyCombinationManager NOT found: " + t);
+        }
+
+        // 兜底：静音切换方法 toggleSilentMode，组合意图期间直接阻止。
+        try {
+            XposedBridge.hookAllMethods(pwm, "toggleSilentMode",
+                    new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    try {
+                        if (KeyInterceptor.isComboIntent()) {
+                            p.setResult(null);
+                            log("toggleSilentMode blocked");
+                        }
+                    } catch (Throwable t) {
+                        log("toggleSilentMode hook failed: " + t);
+                    }
+                }
+            });
+            log("toggleSilentMode hooked");
+        } catch (Throwable t) {
+            log("toggleSilentMode NOT found: " + t);
+        }
+
         // 拦截分发阶段：interceptKeyBeforeDispatching 返回 -1 表示拦截，不分发到应用。
         // 用于在组合键触发后的 2 秒窗口内，阻止系统把电源/音量上事件分发给
         // 上层（crDroid 的震动切换、长按电源菜单等默认功能在这一层或更早处理）。
