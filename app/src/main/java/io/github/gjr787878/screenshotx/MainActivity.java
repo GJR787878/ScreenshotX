@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -42,15 +43,20 @@ public class MainActivity extends Activity {
         // §3.4 平板断点：smallestScreenWidthDp >= 600
         boolean tablet = getResources().getConfiguration().smallestScreenWidthDp >= 600;
 
-        // 根布局：手机竖排（导航在底）/ 平板横排（导航在左）
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(tablet ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
-        root.setPadding(dp(24), dp(48), dp(24), dp(16));
+        // 根布局：FrameLayout，导航栏悬浮于内容之上，半透明玻璃可透出背后内容
+        FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(0xFF000000);
 
         // 主列：标题/语言/Root/内容
         LinearLayout mainCol = new LinearLayout(this);
         mainCol.setOrientation(LinearLayout.VERTICAL);
+        // §3.6.1 悬浮导航占位：padding 必须设在内容列上（不是 ScrollView）
+        //   手机底部让出导航高（76dp）+ 边距；平板左侧让出侧栏宽（72dp）+ 边距
+        if (tablet) {
+            mainCol.setPadding(dp(24) + dp(92), dp(48), dp(24), dp(16));
+        } else {
+            mainCol.setPadding(dp(24), dp(48), dp(24), dp(16) + dp(96));
+        }
 
         // 标题
         TextView title = new TextView(this);
@@ -92,35 +98,43 @@ public class MainActivity extends Activity {
 
         mainCol.addView(contentFrame, frameLp);
 
-        // ===== §3.6 D 导航栏：统一用 GlassNavBar（组件内置 §3.6.1 磨砂背景） =====
+        // 主列铺满底层（导航栏随后叠加上去）
+        root.addView(mainCol, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        // ===== §3.6 D 导航栏：统一用 GlassNavBar =====
         final GlassNavBar nav = new GlassNavBar(this);
         nav.addItem(getDrawable(R.drawable.ic_nav_screenshot), getString(R.string.nav_screenshot));
         nav.addItem(getDrawable(R.drawable.ic_nav_record), getString(R.string.nav_record));
         nav.setSelected(0);
         nav.setOnItemSelectedListener(index -> switchPanel(index == 0));
 
+        // §3.6.1 覆盖导航背景为半透明可穿透版本（GlassButtons v1.0.4 玻璃参数，组件库保持 v1.0.5 最新版）：
+        //   30% 深色玻璃底（0x4D1C1C1E），背后内容半透明透出；1dp 淡白描边；圆角与组件一致 28dp
+        GradientDrawable navBg = new GradientDrawable();
+        navBg.setColor(0x4D1C1C1E);
+        navBg.setCornerRadius(dp(28));
+        navBg.setStroke(dp(1), 0x40FFFFFF);
+        nav.setBackground(navBg);
+
         if (tablet) {
             // §3.4/§3.6 D 平板：导航改左侧竖排悬浮胶囊，垂直居中、约半屏高
             nav.setOrientation(LinearLayout.VERTICAL);
             nav.setSideWidthDp(72f);
-            FrameLayout navSlot = new FrameLayout(this);
             int navH = (int) (getResources().getDisplayMetrics().heightPixels * 0.5f);
-            FrameLayout.LayoutParams navInSlot =
-                    new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, navH);
-            navInSlot.gravity = Gravity.CENTER_VERTICAL;
-            navSlot.addView(nav, navInSlot);
-
-            LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT);
-            slotLp.rightMargin = dp(16);
-            root.addView(navSlot, slotLp);
-            root.addView(mainCol, new LinearLayout.LayoutParams(0, -1, 1f));
+            FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.WRAP_CONTENT, navH);
+            navLp.gravity = Gravity.LEFT | Gravity.CENTER_VERTICAL;
+            navLp.leftMargin = dp(16);
+            root.addView(nav, navLp);
         } else {
-            // 手机：主列占满，GlassNavBar 固定底部横排
-            root.addView(mainCol, new LinearLayout.LayoutParams(-1, 0, 1f));
-            LinearLayout.LayoutParams navLp =
-                    new LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT);
-            navLp.topMargin = dp(8);
+            // 手机：底部横排悬浮胶囊，内容可从玻璃背后透出
+            FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+            navLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            navLp.leftMargin = dp(16);
+            navLp.rightMargin = dp(16);
+            navLp.bottomMargin = dp(12);
             root.addView(nav, navLp);
         }
 
