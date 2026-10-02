@@ -99,6 +99,8 @@ public class KeyInterceptor {
     /** 统一组合判定：两键在 COMBO_WINDOW 内同按即触发。返回是否应拦截当前事件。 */
     private static boolean tryCombo(long now) {
         if (recording || comboTriggered) return true;
+        // 录屏总开关关闭：不触发录屏，也不拦截组合（系统静音切换等默认行为照常）
+        if (!HookLogic.recordingEnabled()) return false;
         long firstTime = Math.min(powerDownTime, volUpDownTime);
         if (firstTime <= 0 || now - firstTime > COMBO_WINDOW) return false;
         HookLogic.log("power+volup combo detected, start recording");
@@ -132,6 +134,8 @@ public class KeyInterceptor {
      */
     public static boolean isComboIntent() {
         long now = System.currentTimeMillis();
+        // 录屏总开关关闭时，不消费系统组合键（静音切换等照常）
+        if (!HookLogic.recordingEnabled()) return false;
         if (powerDown && volUpDown) return true;
         return comboTriggered && now - comboTime < COMBO_TAIL;
     }
@@ -151,6 +155,13 @@ public class KeyInterceptor {
     public static void setRecording(boolean r) {
         recording = r;
         comboTriggered = false;
-        if (r) recordingStartTime = System.currentTimeMillis();
+        if (r) {
+            recordingStartTime = System.currentTimeMillis();
+        } else {
+            // 彻底复位，防止服务异常死亡后按键标志残留导致电源长按/组合失灵
+            pendingPowerUpFromCombo = false;
+            powerDown = false;
+            volUpDown = false;
+        }
     }
 }
