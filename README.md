@@ -10,9 +10,14 @@ It hooks the system framework to intercept the screenshot request and capture th
 
 ## ✨ Features
 
-- **Two triggers, each independently toggleable**
+- **Two screenshot triggers, each independently toggleable**
   - **Power + Volume Down** — replaces the system screenshot
   - **Three-finger swipe down** — global gesture with AOSP-style detection
+- **Built-in screen recording**
+  - **Power + Volume Up** to start, and again (or a brief Power press / tap the capsule) to stop
+  - **Zero dialogs** — the SystemUI MediaProjection consent is auto-approved by the module; tap it manually only if the SystemUI hook is inactive (graceful fallback)
+  - **Internal audio** (media / games) captured via playback capture — a *tee* that copies the stream while your speaker **keeps playing**, no muting
+  - Floating draggable timer capsule; adjustable bitrate; saved to `Movies/Screenshots`
 - **Instant haptic feedback** the moment a trigger is recognized
 - **Floating thumbnail preview** in the screen corner
   - 2 s countdown with a shrinking progress bar
@@ -34,9 +39,9 @@ It hooks the system framework to intercept the screenshot request and capture th
 
 1. Install the APK and grant **Root** in the Magisk prompt.
 2. Open **LSPosed** and enable the **ScreenshotX** module.
-3. In the module's scope, check **System framework** (`system`).
+3. In the module's scope, check **System framework** (`system`) and **SystemUI** (`systemui`, needed for one-tap screen recording).
 4. **Reboot** the phone (or restart the system framework).
-5. Press Power + Volume Down, or swipe down with three fingers.
+5. Press Power + Volume Down (or swipe down with three fingers) for a screenshot, Power + Volume Up for screen recording.
 
 Use **Test screenshot** inside the app to verify that capture works.
 
@@ -48,7 +53,9 @@ Use **Test screenshot** inside the app to verify that capture works.
 | Root (Magisk) | Fallback capture via `screencap`, persist settings, pre-grant overlay permission |
 | Display over other apps | Floating thumbnail preview |
 | Vibrate | Haptic feedback on trigger |
+| Record audio | Internal audio capture (media / games) for screen recording |
 | Foreground service (special use) | Keep the app ready so the preview opens reliably |
+| Foreground service (media projection) | Screen recording session |
 
 ## ❓ FAQ
 
@@ -60,6 +67,9 @@ Enable **Capture secure / DRM content** in settings. It strips `FLAG_SECURE` ins
 
 **Why no Magisk superuser toast on every shot?**
 A root shell is kept alive and reused, so the grant prompt appears only once.
+
+**Why is a recording silent, or why did the phone mute while recording on older versions?**
+Since v1.7.0, recording uses the standard MediaProjection API with audio *playback capture* — a tee that copies audio while it keeps playing on the speaker. Earlier builds used `REMOTE_SUBMIX`, which forcibly redirected audio and muted the device for the whole recording. If a recording is still silent, make sure **Record internal audio** is enabled, the app holds the audio permission (granted automatically via root), and the playing app does not explicitly mark its audio as non-capturable; recordings started while no media is playing have no audio track.
 
 ## 🌐 Language
 
@@ -78,9 +88,14 @@ English · 中文 · Русский — switch with the button at the top of the
 
 ## ✨ 功能特性
 
-- **两种触发方式，可各自独立开关**
+- **两种截屏触发方式，可各自独立开关**
   - **电源键 + 音量下**：替换系统截屏
   - **三指下滑**：全局手势，AOSP 风格判定
+- **内置录屏**
+  - **电源键 + 音量上**开始，再次组合（或录屏中短按电源 / 点击胶囊）结束
+  - **零弹窗**——SystemUI 的 MediaProjection 授权由模块自动批准；仅当 SystemUI hook 未生效时需手动点击（优雅降级）
+  - **内录系统声音**（媒体 / 游戏），基于播放捕获的 *tee* 机制，只复制音频流，扬声器**照常出声**、不会静音
+  - 可拖动悬浮计时胶囊、可调码率，保存到 `Movies/Screenshots`
 - 识别到动作的**瞬间即震动反馈**
 - 屏幕角落**悬浮缩略图预览**
   - 2 秒倒计时，底部进度条收缩
@@ -102,9 +117,9 @@ English · 中文 · Русский — switch with the button at the top of the
 
 1. 安装 APK，在 Magisk 弹窗中授予 **Root**。
 2. 打开 **LSPosed**，启用 **ScreenshotX** 模块。
-3. 模块作用域勾选**「系统框架」**（`system`）。
+3. 模块作用域勾选**「系统框架」**（`system`）与**「SystemUI」**（`systemui`，一键录屏需要）。
 4. **重启手机**（或重启系统框架）。
-5. 按电源键 + 音量下，或三指下滑。
+5. 截屏按电源键 + 音量下（或三指下滑），录屏按电源键 + 音量上。
 
 可在 App 内点**测试截屏**验证抓拍是否正常。
 
@@ -116,7 +131,9 @@ English · 中文 · Русский — switch with the button at the top of the
 | Root（Magisk） | `screencap` 兜底抓拍、持久化设置、预授权悬浮窗 |
 | 悬浮窗权限 | 显示角落悬浮预览 |
 | 震动 | 触发时触觉反馈 |
+| 录音权限 | 录屏内录系统声音（媒体 / 游戏） |
 | 前台服务（特殊用途） | 保持应用就绪，确保预览可靠弹出 |
+| 前台服务（媒体投射） | 录屏会话 |
 
 ## ❓ 常见问题
 
@@ -128,6 +145,9 @@ English · 中文 · Русский — switch with the button at the top of the
 
 **为什么不是每次截图都弹 Magisk 超级用户提示？**
 Root shell 常驻复用，授权提示只出现一次。
+
+**为什么录屏无声，旧版本为什么录屏时手机会静音？**
+自 v1.7.0 起，录屏改用标准 MediaProjection API + 音频*播放捕获*（tee），复制音频的同时扬声器照常播放。更早版本使用 `REMOTE_SUBMIX`，会强制重定向音频、整段录制期间设备静音。若仍无声，请确认已开启**「录制内部声音」**、应用已获得录音权限（root 会自动授予），且播放音频的 App 未显式标记其音频不可捕获；开始录屏时若没有任何媒体播放，则该录像不含音轨。
 
 ## 🌐 语言
 
@@ -146,9 +166,14 @@ Root shell 常驻复用，授权提示只出现一次。
 
 ## ✨ Возможности
 
-- **Два способа запуска, каждый включается отдельно**
+- **Два способа скриншота, каждый включается отдельно**
   - **Питание + Громкость вниз** — заменяет системный скриншот
   - **Свайп тремя пальцами вниз** — глобальный жест в стиле AOSP
+- **Встроенная запись экрана**
+  - **Питание + Громкость вверх** для старта, повторно (или короткое нажатие Питания / нажатие на капсулу) для остановки
+  - **Без диалогов** — согласие SystemUI на MediaProjection автоматически подтверждается модулем; вручную нажать нужно только если хук SystemUI не активен (плавный запасной вариант)
+  - **Внутренний звук** (медиа / игры) через захват воспроизведения — это *ответвление*, которое копирует поток, пока динамик **продолжает играть**, без отключения звука
+  - Перетаскиваемая плавающая капсула с таймером, настраиваемый битрейт, сохранение в `Movies/Screenshots`
 - **Мгновенная вибрация** сразу при распознавании действия
 - **Плавающее превью** в углу экрана
   - обратный отсчёт 2 с с уменьшающейся полосой прогресса
@@ -170,9 +195,9 @@ Root shell 常驻复用，授权提示只出现一次。
 
 1. Установите APK и разрешите **Root** в запросе Magisk.
 2. Откройте **LSPosed**, включите модуль **ScreenshotX**.
-3. В области действия модуля отметьте **«System framework»** (`system`).
+3. В области действия модуля отметьте **«System framework»** (`system`) и **«SystemUI»** (`systemui`, нужен для записи экрана в одно нажатие).
 4. **Перезагрузите** телефон (или системный фреймворк).
-5. Нажмите Питание + Громкость вниз или сделайте свайп тремя пальцами вниз.
+5. Скриншот: Питание + Громкость вниз (или свайп тремя пальцами); запись экрана: Питание + Громкость вверх.
 
 Кнопка **«Тест скриншота»** в приложении проверяет, работает ли захват.
 
@@ -184,7 +209,9 @@ Root shell 常驻复用，授权提示只出现一次。
 | Root (Magisk) | Запасной захват через `screencap`, хранение настроек, выдача разрешения overlay |
 | Поверх других приложений | Плавающее превью |
 | Вибрация | Тактильный отклик при запуске |
+| Запись аудио | Захват внутреннего звука (медиа / игры) при записи экрана |
 | Передняя служба (спец. использование) | Поддержка приложения в готовности для надёжного превью |
+| Передняя служба (медиапроекция) | Сеанс записи экрана |
 
 ## ❓ Частые вопросы
 
@@ -196,6 +223,9 @@ Root shell 常驻复用，授权提示只出现一次。
 
 **Почему не появляется запрос суперпользователя Magisk при каждом снимке?**
 Root-оболочка остаётся запущенной и переиспользуется, поэтому запрос появляется только один раз.
+
+**Почему запись без звука, и почему на старых версиях телефон замолкал во время записи?**
+Начиная с v1.7.0 запись использует стандартный MediaProjection API с *захватом воспроизведения* звука (ответвление): звук копируется, продолжая играть из динамика. Более ранние сборки использовали `REMOTE_SUBMIX`, который принудительно перенаправлял звук и отключал его на устройстве всю запись. Если запись всё же без звука, убедитесь, что включена **«Запись внутреннего звука»**, приложению выдано разрешение на аудио (автоматически через root), а воспроизводящее приложение не помечает звук как незахватываемый; если при старте записи медиа не играло, звуковая дорожка в записи отсутствует.
 
 ## 🌐 Язык
 
