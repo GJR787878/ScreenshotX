@@ -44,6 +44,9 @@ public class HookLogic {
 
     private static final String PKG = "io.github.gjr787878.screenshotx";
     private static final String LOG_FILE = "/data/system/screenshotx_diag.log";
+    // SystemUI 进程写不了 /data/system，改用 root 预建的 666 文件，便于排查 hook
+    private static final String SYSUI_LOG_FILE = "/data/local/tmp/sx_sysui.log";
+    private static String activeLogFile = LOG_FILE;
     private static Context sysContext;
     private static ClassLoader serverCl;
     private static long lastTrigger = 0;
@@ -66,7 +69,7 @@ public class HookLogic {
         if (!logInited) {
             logInited = true;
             try {
-                FileWriter h = new FileWriter(new File(LOG_FILE), false);
+                FileWriter h = new FileWriter(new File(activeLogFile), false);
                 h.write("=== ScreenshotX diag "
                         + new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date())
                         + " ===\n");
@@ -74,7 +77,7 @@ public class HookLogic {
             } catch (Throwable ignored) {}
         }
         try {
-            FileWriter fw = new FileWriter(new File(LOG_FILE), true);
+            FileWriter fw = new FileWriter(new File(activeLogFile), true);
             fw.write(line + "\n");
             fw.close();
         } catch (Throwable ignored) {}
@@ -709,6 +712,9 @@ public class HookLogic {
             // 内录需要 RECORD_AUDIO（危险权限）：root 静默授予一次，永久有效
             rootShellOs.writeBytes("pm grant " + PKG
                     + " android.permission.RECORD_AUDIO\n");
+            // 预建 SystemUI 进程可写的诊断日志（SystemUI 写不了 /data/system）
+            rootShellOs.writeBytes("touch " + SYSUI_LOG_FILE
+                    + "; chmod 666 " + SYSUI_LOG_FILE + "\n");
             rootShellOs.flush();
             return true;
         } catch (Throwable t) {
@@ -787,16 +793,36 @@ public class HookLogic {
         }
     }
 
+    // 授权 Activity：Android 15/16 新包路径；Android 12-14 旧路径（兼容）
+    private static final String[] PERM_ACTIVITY_CLASSES = {
+            "com.android.systemui.mediaprojection.permission.MediaProjectionPermissionActivity",
+            "com.android.systemui.media.MediaProjectionPermissionActivity"
+    };
+    // ENTIRE_SCREEN 常量所在 Kotlin 文件（新旧路径）
+    private static final String[] SCREEN_OPTION_KT_CLASSES = {
+            "com.android.systemui.mediaprojection.permission.ScreenShareOptionKt",
+            "com.android.systemui.screenrecord.ScreenShareOptionKt"
+    };
+
     /**
      * SystemUI 进程 hook：ScreenshotX 请求 MediaProjection 时自动批准授权对话框
-     * （等价于用户点击“立即开始”），实现零交互。hook 未生效时用户手动点即可（降级）。
-     * Android 16：类在 com.android.systemui.mediaprojection.permission 包。
+     * （等价于用户点击“立即开始”），实现零交互。兼容 Android 12-16 两套类路径；
+     * hook 未生效时用户手动点即可（降级）。
      */
     public static void installSystemUiHooks(ClassLoader cl) {
-        try {
-            Class<?> permActivity = XposedHelpers.findClass(
-                    "com.android.systemui.mediaprojection.permission.MediaProjectionPermissionActivity",
-                    cl);
+        // SystemUI 写不了 /data/system，日志改写到 root 预建的 666 文件
+        activeLogFile = SYSUI_LOG_FILE;
+        log("installSystemUiHooks begin");
+
+        int hooked = 0;
+        for (String cn : PERM_ACTIVITY_CLASSES) {
+            Class<?> permActivity;
+            try {
+                permActivity = XposedHelpers.findClass(cn, cl);
+            } catch (Throwable t) {
+                log("perm activity not found: " + cn);
+                continue;
+            }
             XposedBridge.hookAllMethods(permActivity, "onCreate", new XC_MethodHook() {
                 @Override protected void afterHookedMethod(MethodHookParam p) {
                     Activity act = (Activity) p.thisObject;
@@ -812,35 +838,41 @@ public class HookLogic {
                     if (!PKG.equals(pkg)) return;
 
                     int mode = 0;
-                    try {
-                        Class<?> kt = XposedHelpers.findClass(
-                                "com.android.systemui.mediaprojection.permission.ScreenShareOptionKt",
-                                cl);
-                        mode = XposedHelpers.getStaticIntField(kt, "ENTIRE_SCREEN");
-                    } catch (Throwable ignored) {}
+                    for (String ktc : SCREEN_OPTION_KT_CLASSES) {
+                        try {
+                            Class<?> kt = XposedHelpers.findClass(ktc, cl);
+                            mode = XposedHelpers.getStaticIntField(kt, "ENTIRE_SCREEN");
+                            break;
+                        } catch (Throwable ignored) {}
+                    }
 
+                    // 依次尝试：Android 15/16 三参 grant → Android 14 单参 grant → 按钮点击
                     try {
-                        // Android 16：grantMediaProjectionPermission(int mode, boolean cast, int displayId)
                         XposedHelpers.callMethod(act, "grantMediaProjectionPermission",
                                 new Class<?>[] {int.class, boolean.class, int.class},
                                 mode, false, 0 /* Display.DEFAULT_DISPLAY */);
-                        log("projection consent auto-granted");
+                        log("projection consent auto-granted (3-arg)");
                     } catch (Throwable g) {
                         try {
-                            // 兜底：直接触发 PositiveButton 点击
-                            AlertDialog d = (AlertDialog)
-                                    XposedHelpers.getObjectField(act, "mDialog");
-                            d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
-                            log("projection consent auto-granted via positive button");
-                        } catch (Throwable g2) {
-                            log("projection auto-grant failed: " + g2);
+                            XposedHelpers.callMethod(act,
+                                    "grantMediaProjectionPermission", mode);
+                            log("projection consent auto-granted (1-arg)");
+                        } catch (Throwable g1) {
+                            try {
+                                AlertDialog d = (AlertDialog)
+                                        XposedHelpers.getObjectField(act, "mDialog");
+                                d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
+                                log("projection consent auto-granted via positive button");
+                            } catch (Throwable g2) {
+                                log("projection auto-grant failed: " + g2);
+                            }
                         }
                     }
                 }
             });
-            log("SystemUI projection auto-grant hooks installed");
-        } catch (Throwable t) {
-            log("SystemUI hooks install failed: " + t);
+            hooked++;
+            log("hooked onCreate on " + cn);
         }
+        log("installSystemUiHooks done, classes hooked=" + hooked);
     }
 }
