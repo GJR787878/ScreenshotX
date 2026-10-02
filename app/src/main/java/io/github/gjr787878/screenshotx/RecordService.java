@@ -84,6 +84,14 @@ public class RecordService extends Service {
     private boolean wantAudio;
     private String outputPath;
     private int width, height, dpi;
+    // Surface 视频帧 pts 基于开机 boottime（值=开机时长），写入前须减首帧偏移归零，
+    // 否则文件时长=开机时长、前一大段卡在首帧画面
+    private long videoPtsOrigin = -1;
+    private long audioPtsOrigin = -1;
+    // 上一次会话收尾期间到达的 START：排队，收尾完成后同实例自动开始，不静默丢弃
+    private boolean pendingStart = false;
+    private int pendingResultCode = 0;
+    private Intent pendingResultData = null;
 
     private final MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
         @Override
@@ -119,8 +127,6 @@ public class RecordService extends Service {
     }
 
     private void startRecording(Intent intent) {
-        if (mediaProjection != null || drainThread != null) return;
-
         final int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
         final Intent data;
         if (Build.VERSION.SDK_INT >= 33) {
@@ -133,6 +139,22 @@ public class RecordService extends Service {
             stopSelf();
             return;
         }
+
+        if (drainThread != null) {
+            // 会话进行中（stopping=false）：重复 START 忽略；
+            // 收尾中（stopping=true）：排队，finalize 完成后自动开始
+            if (stopping) {
+                pendingResultCode = resultCode;
+                pendingResultData = data;
+                pendingStart = true;
+                Log.d(TAG, "start queued, previous session finalizing");
+            }
+            return;
+        }
+
+        // 新会话：时间戳偏移复位
+        videoPtsOrigin = -1;
+        audioPtsOrigin = -1;
 
         // Android 14+：必须先 startForeground(mediaProjection) 再 getMediaProjection
         startForeground(2, buildNotification("录屏中..."));
@@ -356,6 +378,15 @@ public class RecordService extends Service {
             boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
             boolean canWrite = info.size > 0 && muxerStarted;
             if (canWrite) {
+                // 各轨 pts 减首帧偏移归零：视频帧原始 pts=开机 boottime，
+                // 不归零会导致文件时长=开机时长、画面卡在首帧
+                if (video) {
+                    if (videoPtsOrigin < 0) videoPtsOrigin = info.presentationTimeUs;
+                    info.presentationTimeUs -= videoPtsOrigin;
+                } else {
+                    if (audioPtsOrigin < 0) audioPtsOrigin = info.presentationTimeUs;
+                    info.presentationTimeUs -= audioPtsOrigin;
+                }
                 ByteBuffer out = enc.getOutputBuffer(idx);
                 out.position(info.offset);
                 out.limit(info.offset + info.size);
@@ -417,13 +448,49 @@ public class RecordService extends Service {
             try { new File(outputPath).delete(); } catch (Throwable ignored) {}
         }
 
+        // 收尾期间有排队的新开始：重置会话字段，同实例立即开始（不发 ENDED、不 stopSelf，
+        // 否则 KeyInterceptor 会被误复位）
+        if (pendingStart) {
+            int rc = pendingResultCode;
+            Intent pd = pendingResultData;
+            pendingStart = false;
+            pendingResultData = null;
+            resetSessionState();
+            Log.d(TAG, "starting queued session after finalize");
+            Intent ni = new Intent().setAction(ACTION_START)
+                    .putExtra(EXTRA_RESULT_CODE, rc)
+                    .putExtra(EXTRA_RESULT_DATA, pd);
+            startRecording(ni);
+            return;
+        }
+
         sendBroadcast(new Intent(ACTION_RECORD_ENDED).setPackage(getPackageName()));
         stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
+    /** 会话收尾后、开始排队的新会话前，重置实例上的会话状态。 */
+    private void resetSessionState() {
+        drainThread = null;
+        audioCaptureThread = null;
+        stopping = false;
+        muxerStarted = false;
+        videoTrack = -1;
+        audioTrack = -1;
+        audioState = AUDIO_PENDING;
+        videoPtsOrigin = -1;
+        audioPtsOrigin = -1;
+        outputPath = null;
+    }
+
     /** 请求停止（幂等，可由 ACTION_STOP 或 projection onStop 调用）。 */
     private void requestStop(String reason) {
+        // 若新开始还在排队：先取消排队，旧会话随后正常收尾
+        if (pendingStart) {
+            pendingStart = false;
+            pendingResultData = null;
+            Log.d(TAG, "queued start canceled by stop");
+        }
         if (stopping) return;
         stopping = true;
         new Thread(() -> {
