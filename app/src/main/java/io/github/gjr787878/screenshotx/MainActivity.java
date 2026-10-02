@@ -122,10 +122,13 @@ public class MainActivity extends Activity {
             navLp.leftMargin = dp(20);
             root.addView(nav, navLp);
         } else {
-            // 手机：底部居中的窄胶囊（纯图标，固定宽 132dp），底边距 24dp，内容从玻璃背后透出
+            // 手机：底部横排悬浮胶囊，横向铺满（左右边距 24dp），做薄到 48dp，底边距 24dp
+            nav.setHeightDp(48f);
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
-                    dp(132), FrameLayout.LayoutParams.WRAP_CONTENT);
+                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
             navLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            navLp.leftMargin = dp(24);
+            navLp.rightMargin = dp(24);
             navLp.bottomMargin = dp(24);
             root.addView(nav, navLp);
         }
