@@ -47,5 +47,26 @@
     <string name="picker_ring">色环</string>
     <string name="notif_channel">保活服务</string>
     <string name="notif_text">截屏捕获服务运行中</string>
+
+    <!-- §3.6 D 底部导航 -->
+    <string name="nav_screenshot">截屏</string>
+    <string name="nav_record">录屏</string>
+    <!-- 录屏设置面板 -->
+    <string name="rec_settings">录屏设置</string>
+    <string name="rec_enable_title">启用录屏功能</string>
+    <string name="rec_enable_on">录屏功能：开</string>
+    <string name="rec_enable_off">录屏功能：关</string>
+    <string name="rec_enable_note">关闭后，电源键+音量上键不会触发录屏；系统默认组合功能（静音切换）照常使用。</string>
+    <string name="rec_info">电源键 + 音量上键 = 开始录屏\n录屏中单击电源键 = 结束录屏\n小胶囊可拖动，单击结束录屏</string>
+    <string name="rec_bitrate_title">录屏码率</string>
+    <string name="rec_bitrate_low">低（1Mbps，省电不发热）</string>
+    <string name="rec_bitrate_mid">中（2Mbps，平衡）</string>
+    <string name="rec_bitrate_high">高（4Mbps，清晰但发热）</string>
+    <string name="rec_bitrate_note">码率越高视频越清晰，但手机发热和耗电也越明显。建议日常用中码率。</string>
+    <string name="rec_bitrate_set">录屏码率已设置</string>
+    <string name="rec_audio_title">录制系统声音</string>
+    <string name="rec_audio_on">录制系统声音：开</string>
+    <string name="rec_audio_off">录制系统声音：关</string>
+    <string name="rec_audio_note">开启后录屏会同时录制手机内部声音（媒体/游戏）。部分机型内录需要系统支持，若录到无声可关闭。</string>
 </resources>
 
