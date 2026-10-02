@@ -167,7 +167,7 @@ public class MainActivity extends Activity {
 
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setPadding(dp(2), dp(8), dp(2), dp(8));
+        inner.setPadding(dp(2), dp(8), dp(2), dp(112));
 
         // 触发方式标题
         TextView trigHeader = new TextView(this);
@@ -263,7 +263,7 @@ public class MainActivity extends Activity {
 
         LinearLayout inner = new LinearLayout(this);
         inner.setOrientation(LinearLayout.VERTICAL);
-        inner.setPadding(dp(2), dp(8), dp(2), dp(8));
+        inner.setPadding(dp(2), dp(8), dp(2), dp(112));
 
         // 标题
         TextView header = new TextView(this);
