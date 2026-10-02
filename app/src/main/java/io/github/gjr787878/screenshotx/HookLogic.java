@@ -257,21 +257,11 @@ public class HookLogic {
             log("global actions hook failed: " + t);
         }
 
-        // 拦截电源键按下处理（长按检测入口），录屏/组合键窗口内直接吞掉
-        try {
-            XposedBridge.hookAllMethods(pwm, "interceptPowerKeyDown",
-                    new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (KeyInterceptor.isRecording() || KeyInterceptor.comboActive()) {
-                        p.setResult(null);
-                        log("power key down intercepted");
-                    }
-                }
-            });
-            log("interceptPowerKeyDown hooked");
-        } catch (Throwable t) {
-            log("power key down hook failed: " + t);
-        }
+        // §3.6/长按修复：不再 hook/跳过 interceptPowerKeyDown。
+        // 系统的电源长按检测（postDelayed(mPowerLongPress, 超时)）就在该方法内，
+        // 一旦被 setResult 跳过，本次长按的定时器不会 post，且不会补 post
+        // → 表现为长按电源失灵。录屏中的菜单拦截统一由下方 powerLongPress /
+        // showGlobalActionsInternal 两个 hook 负责（长按定时器到点才执行，届时拦截即可）。
 
         // 拦截电源长按处理本身（crDroid 长按定时器到点后走 powerLongPress）
         try {
@@ -757,12 +747,27 @@ public class HookLogic {
         }
     }
 
+    /** 录屏功能总开关（Settings.Global），供 KeyInterceptor 在输入线程判定。 */
+    public static boolean recordingEnabled() {
+        try {
+            Context c = sysContext != null ? sysContext : resolveSystemContext();
+            if (c == null) return true; // 开机早期上下文未就绪时默认放行
+            return Prefs.recEnabled(c);
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
     /**
      * 触发录屏（由 KeyInterceptor 调用）。
      * 优先：system_server 内直接经 MPMS 创建 token 并启动 RecordService，零弹窗；
      * 失败降级：拉起透明 ProjectionRequestActivity 走正常授权（用户手点/SystemUI hook）。
      */
     public static void startRecording() {
+        if (!recordingEnabled()) {
+            log("startRecording skipped, recording disabled");
+            return;
+        }
         Context c = sysContext;
         if (c == null) c = resolveSystemContext();
         if (c == null) {
