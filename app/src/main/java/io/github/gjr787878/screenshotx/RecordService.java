@@ -552,8 +552,16 @@ public class RecordService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
+        // 异常销毁（崩溃/被杀等未走正常收尾路径）前判断是否仍有活动会话
+        boolean activeSession = mediaProjection != null || videoEncoder != null;
         releaseQuietly();
         try { if (callbackThread != null) callbackThread.quitSafely(); } catch (Throwable ignored) {}
+        if (activeSession) {
+            // 兜底通知 system_server 复位按键状态，防止 recording 残留导致电源长按失灵
+            try {
+                sendBroadcast(new Intent(ACTION_RECORD_ENDED).setPackage(getPackageName()));
+            } catch (Throwable ignored) {}
+        }
     }
 
     private void createChannel() {
