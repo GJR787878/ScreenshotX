@@ -15,6 +15,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 
 import com.gjr.glassbutton.GlassCapsuleButton;
 import com.gjr.glassbutton.GlassNavBar;
@@ -49,12 +51,12 @@ public class MainActivity extends Activity {
         // 主列：标题/语言/Root/内容
         LinearLayout mainCol = new LinearLayout(this);
         mainCol.setOrientation(LinearLayout.VERTICAL);
-        // §3.6.1 悬浮导航占位：padding 必须设在内容列上（不是 ScrollView）
-        //   对齐 GlassButtons v1.0.5 release demo：手机底部 120dp、平板左侧让出侧栏 72dp + 边距
+        // §3.6.1 悬浮导航：内容必须全屏铺到导航背后（玻璃才透出内容而非黑块），底部不留白
+        //   平板左侧让出侧栏（56dp）+ 边距
         if (tablet) {
-            mainCol.setPadding(dp(24) + dp(92), dp(48), dp(24), dp(16));
+            mainCol.setPadding(dp(24) + dp(76), dp(48), dp(24), dp(16));
         } else {
-            mainCol.setPadding(dp(24), dp(48), dp(24), dp(120));
+            mainCol.setPadding(dp(24), dp(48), dp(24), 0);
         }
 
         // 标题
@@ -101,17 +103,18 @@ public class MainActivity extends Activity {
         root.addView(mainCol, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
-        // ===== §3.6 D 导航栏：统一用 GlassNavBar =====
+        // ===== §3.6 D 导航栏：统一用 GlassNavBar（纯图标、收窄）=====
         final GlassNavBar nav = new GlassNavBar(this);
         nav.addItem(getDrawable(R.drawable.ic_nav_screenshot), getString(R.string.nav_screenshot));
         nav.addItem(getDrawable(R.drawable.ic_nav_record), getString(R.string.nav_record));
         nav.setSelected(0);
         nav.setOnItemSelectedListener(index -> switchPanel(index == 0));
+        hideNavLabels(nav); // 去掉文字，只留图标
 
         if (tablet) {
-            // §3.4/§3.6 D 平板：导航改左侧竖排悬浮胶囊，垂直居中、约半屏高（对齐 v1.0.5 demo）
+            // §3.4/§3.6 D 平板：左侧竖排悬浮胶囊，垂直居中、约半屏高，纯图标收窄到 56dp
             nav.setOrientation(LinearLayout.VERTICAL);
-            nav.setSideWidthDp(72f);
+            nav.setSideWidthDp(56f);
             int navH = (int) (getResources().getDisplayMetrics().heightPixels * 0.5f);
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT, navH);
@@ -119,17 +122,31 @@ public class MainActivity extends Activity {
             navLp.leftMargin = dp(20);
             root.addView(nav, navLp);
         } else {
-            // 手机：底部横排悬浮胶囊（对齐 v1.0.5 demo：左右 24dp、底 24dp），内容可从玻璃背后透出
+            // 手机：底部居中的窄胶囊（纯图标，固定宽 132dp），底边距 24dp，内容从玻璃背后透出
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
+                    dp(132), FrameLayout.LayoutParams.WRAP_CONTENT);
             navLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-            navLp.leftMargin = dp(24);
-            navLp.rightMargin = dp(24);
             navLp.bottomMargin = dp(24);
             root.addView(nav, navLp);
         }
 
         setContentView(root);
+    }
+
+    /** 隐藏 GlassNavBar 各项的文字标签（不改组件库，遍历其内部视图树）。 */
+    private void hideNavLabels(GlassNavBar nav) {
+        ViewGroup inner = (ViewGroup) nav.findViewWithTag("glass_nav_inner");
+        if (inner == null) return;
+        for (int i = 0; i < inner.getChildCount(); i++) {
+            View item = inner.getChildAt(i);
+            if (item instanceof ViewGroup) {
+                ViewGroup g = (ViewGroup) item;
+                for (int j = 0; j < g.getChildCount(); j++) {
+                    View c = g.getChildAt(j);
+                    if (c instanceof TextView) c.setVisibility(View.GONE);
+                }
+            }
+        }
     }
 
     private void switchPanel(boolean showShot) {
