@@ -16,6 +16,7 @@ public class Prefs {
     public static final String K_LANG = "screenshotx_lang";        // zh / en / ru
     public static final String K_REC_BITRATE = "screenshotx_rec_bitrate"; // 录屏码率（bps）
     public static final String K_REC_AUDIO = "screenshotx_rec_audio";   // 录制系统声音（1=开）
+    public static final String K_REC_ENABLED = "screenshotx_rec_enabled"; // 录屏功能总开关（1=开）
 
     public static boolean keys(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_KEYS, 1) == 1; }
@@ -42,6 +43,12 @@ public class Prefs {
     /** 是否录制系统声音（内录），默认开启。 */
     public static boolean recAudio(Context c) {
         try { return Settings.Global.getInt(c.getContentResolver(), K_REC_AUDIO, 1) == 1; }
+        catch (Throwable t) { return true; }
+    }
+
+    /** 录屏功能总开关，默认开启。关闭后组合键不触发录屏，系统默认组合行为照常。 */
+    public static boolean recEnabled(Context c) {
+        try { return Settings.Global.getInt(c.getContentResolver(), K_REC_ENABLED, 1) == 1; }
         catch (Throwable t) { return true; }
     }
 
