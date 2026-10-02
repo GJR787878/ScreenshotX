@@ -47,5 +47,26 @@
     <string name="picker_ring">Кольцо</string>
     <string name="notif_channel">Фоновая служба</string>
     <string name="notif_text">Служба создания скриншотов работает</string>
+
+    <!-- §3.6 D Нижняя навигация -->
+    <string name="nav_screenshot">Снимок</string>
+    <string name="nav_record">Запись</string>
+    <!-- Панель записи экрана -->
+    <string name="rec_settings">Запись экрана</string>
+    <string name="rec_enable_title">Включить запись экрана</string>
+    <string name="rec_enable_on">Запись экрана: вкл</string>
+    <string name="rec_enable_off">Запись экрана: выкл</string>
+    <string name="rec_enable_note">Когда выключено, Питание + Громкость вверх не запускает запись; системное сочетание (переключение беззвучного режима) работает как обычно.</string>
+    <string name="rec_info">Питание + Громкость вверх = начать запись\nНажать Питание во время записи = остановить\nКапсулу можно перетаскивать; нажмите её для остановки</string>
+    <string name="rec_bitrate_title">Битрейт видео</string>
+    <string name="rec_bitrate_low">Низкий (1 Мбит/с, экономия)</string>
+    <string name="rec_bitrate_mid">Средний (2 Мбит/с, баланс)</string>
+    <string name="rec_bitrate_high">Высокий (4 Мбит/с, чётче, но греется)</string>
+    <string name="rec_bitrate_note">Выше битрейт — чётче видео, но сильнее нагрев и расход батареи. Для повседневного использования рекомендуется средний.</string>
+    <string name="rec_bitrate_set">Битрейт видео установлен</string>
+    <string name="rec_audio_title">Запись системного звука</string>
+    <string name="rec_audio_on">Запись системного звука: вкл</string>
+    <string name="rec_audio_off">Запись системного звука: выкл</string>
+    <string name="rec_audio_note">При включении записывается внутренний звук (медиа/игры). На некоторых устройствах требуется поддержка системы; если звука нет, выключите.</string>
 </resources>
 
