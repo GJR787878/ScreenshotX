@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
-import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
@@ -51,11 +50,11 @@ public class MainActivity extends Activity {
         LinearLayout mainCol = new LinearLayout(this);
         mainCol.setOrientation(LinearLayout.VERTICAL);
         // §3.6.1 悬浮导航占位：padding 必须设在内容列上（不是 ScrollView）
-        //   手机底部让出导航高（76dp）+ 边距；平板左侧让出侧栏宽（72dp）+ 边距
+        //   对齐 GlassButtons v1.0.5 release demo：手机底部 120dp、平板左侧让出侧栏 72dp + 边距
         if (tablet) {
             mainCol.setPadding(dp(24) + dp(92), dp(48), dp(24), dp(16));
         } else {
-            mainCol.setPadding(dp(24), dp(48), dp(24), dp(16) + dp(96));
+            mainCol.setPadding(dp(24), dp(48), dp(24), dp(120));
         }
 
         // 标题
@@ -109,32 +108,24 @@ public class MainActivity extends Activity {
         nav.setSelected(0);
         nav.setOnItemSelectedListener(index -> switchPanel(index == 0));
 
-        // §3.6.1 覆盖导航背景为半透明可穿透版本（GlassButtons v1.0.4 玻璃参数，组件库保持 v1.0.5 最新版）：
-        //   30% 深色玻璃底（0x4D1C1C1E），背后内容半透明透出；1dp 淡白描边；圆角与组件一致 28dp
-        GradientDrawable navBg = new GradientDrawable();
-        navBg.setColor(0x4D1C1C1E);
-        navBg.setCornerRadius(dp(28));
-        navBg.setStroke(dp(1), 0x40FFFFFF);
-        nav.setBackground(navBg);
-
         if (tablet) {
-            // §3.4/§3.6 D 平板：导航改左侧竖排悬浮胶囊，垂直居中、约半屏高
+            // §3.4/§3.6 D 平板：导航改左侧竖排悬浮胶囊，垂直居中、约半屏高（对齐 v1.0.5 demo）
             nav.setOrientation(LinearLayout.VERTICAL);
             nav.setSideWidthDp(72f);
             int navH = (int) (getResources().getDisplayMetrics().heightPixels * 0.5f);
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.WRAP_CONTENT, navH);
             navLp.gravity = Gravity.LEFT | Gravity.CENTER_VERTICAL;
-            navLp.leftMargin = dp(16);
+            navLp.leftMargin = dp(20);
             root.addView(nav, navLp);
         } else {
-            // 手机：底部横排悬浮胶囊，内容可从玻璃背后透出
+            // 手机：底部横排悬浮胶囊（对齐 v1.0.5 demo：左右 24dp、底 24dp），内容可从玻璃背后透出
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
             navLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-            navLp.leftMargin = dp(16);
-            navLp.rightMargin = dp(16);
-            navLp.bottomMargin = dp(12);
+            navLp.leftMargin = dp(24);
+            navLp.rightMargin = dp(24);
+            navLp.bottomMargin = dp(24);
             root.addView(nav, navLp);
         }
 
