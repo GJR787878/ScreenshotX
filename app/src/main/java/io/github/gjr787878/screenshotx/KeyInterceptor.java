@@ -3,10 +3,12 @@ package io.github.gjr787878.screenshotx;
 import android.view.KeyEvent;
 
 /**
- * 按键拦截器：
- * - 电源键 + 音量上键 = 触发录屏（多层拦截，屏蔽系统默认功能：震动切换、电源菜单等）
- * - 录屏期间，电源键短按（录屏稳定 1 秒后）= 结束录屏（不锁屏）
- * - 组合键触发时的电源键抬起不能被误判为"结束录屏"
+ * 按键拦截器（重写版）：
+ * - 电源键 + 音量上键 = 触发录屏（两种按键顺序统一走 tryCombo，窗口 1.5s）
+ * - 录屏期间：电源键短按（开始 1s 后）= 结束录屏（不锁屏）；
+ *   音量键一律放行，可正常调节音量（旧版录屏中音量上键被全部吞掉）
+ * - 组合触发后的拦截窗口仅保留 0.6s 即复位所有标志
+ *   （旧版 comboTriggered 永久残留，会导致系统静音切换永久失效）
  */
 public class KeyInterceptor {
 
@@ -18,143 +20,137 @@ public class KeyInterceptor {
     private static volatile boolean comboTriggered = false;
     private static long comboTime = 0;
     private static volatile boolean pendingPowerUpFromCombo = false;
-    private static volatile long recordingStartTime = 0;
+    private static long recordingStartTime = 0;
 
-    private static final long COMBO_TIMEOUT = 1500;
-    private static final long POWER_SINGLE_TIMEOUT = 400;
+    /** 先按下的键在该窗口内，另一键按下才算组合。 */
+    private static final long COMBO_WINDOW = 1500;
+    /** 组合触发后继续拦截残余事件的短窗口。 */
+    private static final long COMBO_TAIL = 600;
+    /** 录屏开始后多久才允许电源键停止（防组合释放被误判）。 */
     private static final long RECORD_STABLE_DELAY = 1000;
-    // 组合键触发后，短时间内继续拦截电源/音量上事件（防系统默认功能）
-    private static final long COMBO_INTERCEPT_WINDOW = 2000;
 
     /**
      * 处理按键事件（interceptKeyBeforeQueueing 阶段）。
-     * 返回 true 表示应该拦截这个事件（不让系统继续处理）。
+     * 返回 true 表示拦截该事件，不让系统继续处理。
      */
     public static boolean onKeyEvent(int keyCode, int action) {
         boolean down = action == KeyEvent.ACTION_DOWN;
         boolean up = action == KeyEvent.ACTION_UP;
         boolean intercept = false;
+        long now = System.currentTimeMillis();
+
+        // 尾部窗口过期，立即复位组合标志（修复旧版标志永久残留）
+        if (comboTriggered && now - comboTime > COMBO_TAIL) {
+            comboTriggered = false;
+        }
 
         switch (keyCode) {
             case KeyEvent.KEYCODE_VOLUME_UP:
                 if (down) {
                     volUpDown = true;
-                    volUpDownTime = System.currentTimeMillis();
-                    // 仅当电源键【当前仍按住】（组合键操作中）才拦截音量上，
-                    // 防止 crDroid 把 电源+音量上 当成"切换震动模式"默认功能。
-                    // 电源键松开后的正常音量调节不受影响。
-                    if (powerDown) {
-                        intercept = true;
+                    volUpDownTime = now;
+                    // 电源键当前按住且未在录屏：尝试组合；录屏中音量键放行调音量
+                    if (powerDown && !recording) {
+                        intercept = tryCombo(now);
                     }
                 } else if (up) {
                     volUpDown = false;
-                    if (comboTriggered) {
-                        intercept = true;
-                        // 不立即重置 comboTriggered：保留 2 秒拦截窗口，
-                        // 期间持续拦截电源/音量上事件（防 crDroid 震动切换等）
-                    }
+                    // 组合释放当刻的音量上抬起吞掉；录屏中的音量抬起一律放行
+                    if (comboTriggered) intercept = true;
                 }
                 break;
 
             case KeyEvent.KEYCODE_POWER:
                 if (down) {
                     powerDown = true;
-                    powerDownTime = System.currentTimeMillis();
-                    comboTriggered = false;
-                    // 录屏期间，电源键按下：拦截，不锁屏
+                    powerDownTime = now;
                     if (recording) {
+                        // 录屏中电源按下：拦截，不锁屏/不唤醒
                         intercept = true;
-                    }
-                    // 音量上已按下（1s 内）：立即触发录屏，并拦截电源 down
-                    // （防止系统把电源键当普通唤醒/长按处理；
-                    //   长按音量连续调节超 1s 后按电源不算组合键，避免误触发）
-                    if (volUpDown && !recording && !comboTriggered
-                            && System.currentTimeMillis() - volUpDownTime < 1000) {
-                        HookLogic.log("volup+power combo detected (reverse), start recording");
-                        HookLogic.startRecording();
-                        recording = true;
-                        comboTriggered = true;
-                        comboTime = System.currentTimeMillis();
-                        recordingStartTime = System.currentTimeMillis();
-                        pendingPowerUpFromCombo = true;
-                        intercept = true;
+                    } else if (volUpDown) {
+                        // 反向顺序：音量上已按住，电源后按
+                        intercept = tryCombo(now);
                     }
                 } else if (up) {
                     powerDown = false;
-                    long dur = System.currentTimeMillis() - powerDownTime;
+                    long dur = now - powerDownTime;
                     if (pendingPowerUpFromCombo) {
+                        // 组合触发当次的电源抬起吞掉，不判为"结束录屏"
                         pendingPowerUpFromCombo = false;
                         intercept = true;
                         break;
                     }
-                    // 录屏期间，电源键短按抬起 = 结束录屏（录屏稳定 1 秒以上）
-                    if (recording && dur < 500) {
-                        long sinceRecordStart = System.currentTimeMillis() - recordingStartTime;
-                        if (sinceRecordStart > RECORD_STABLE_DELAY) {
+                    if (recording) {
+                        if (dur < 500 && now - recordingStartTime > RECORD_STABLE_DELAY) {
                             HookLogic.log("power single press during recording, stop");
                             HookLogic.stopRecording();
                             recording = false;
                         }
+                        // 录屏中电源抬起一律拦截，不触发睡眠
                         intercept = true;
                     }
                 }
                 break;
         }
 
-        // 检测组合键：电源键按下 + 音量上按下 = 触发录屏
-        if (powerDown && volUpDown && !recording && !comboTriggered) {
-            long now = System.currentTimeMillis();
-            if (now - powerDownTime < COMBO_TIMEOUT) {
-                HookLogic.log("power+volup combo detected, start recording");
-                HookLogic.startRecording();
-                recording = true;
-                comboTriggered = true;
-                comboTime = now;
-                recordingStartTime = System.currentTimeMillis();
-                pendingPowerUpFromCombo = true;
-                intercept = true;
-            }
-        }
-
         return intercept;
     }
 
-    /** interceptKeyBeforeDispatching 阶段的拦截判断。返回 true 则返回 -1 拦截分发。 */
+    /** 统一组合判定：两键在 COMBO_WINDOW 内同按即触发。返回是否应拦截当前事件。 */
+    private static boolean tryCombo(long now) {
+        if (recording || comboTriggered) return true;
+        long firstTime = Math.min(powerDownTime, volUpDownTime);
+        if (firstTime <= 0 || now - firstTime > COMBO_WINDOW) return false;
+        HookLogic.log("power+volup combo detected, start recording");
+        // 重活（授权/录制）全部异步进行，不阻塞输入事件线程
+        HookLogic.startRecording();
+        recording = true;
+        comboTriggered = true;
+        comboTime = now;
+        recordingStartTime = now;
+        pendingPowerUpFromCombo = true;
+        return true;
+    }
+
+    /** interceptKeyBeforeDispatching 阶段的拦截判断。返回 true 则拦截分发。 */
     public static boolean shouldInterceptDispatching(int keyCode) {
         long now = System.currentTimeMillis();
         // 录屏期间，电源键所有事件都拦截
         if (recording && keyCode == KeyEvent.KEYCODE_POWER) return true;
-        // 组合键触发后的 2 秒窗口内，电源/音量上事件都拦截（防系统默认功能）
-        if (comboTriggered && (keyCode == KeyEvent.KEYCODE_POWER
+        // 组合短窗口内，电源/音量上残余事件拦截
+        if (comboTriggered && now - comboTime < COMBO_TAIL
+                && (keyCode == KeyEvent.KEYCODE_POWER
                 || keyCode == KeyEvent.KEYCODE_VOLUME_UP)) {
-            if (now - comboTime < COMBO_INTERCEPT_WINDOW) return true;
+            return true;
         }
         return false;
     }
 
-    /** 实时判断"电源+音量上"组合意图：组合进行中（两键同按）或已触发录屏。
-     *  供系统组合键管理器（静音切换等）消费拦截用。 */
+    /**
+     * 实时组合意图：两键同按，或触发后的短尾窗口。
+     * 供系统组合键管理器（静音切换等）消费拦截用。
+     */
     public static boolean isComboIntent() {
-        if (comboTriggered) return true;
-        return powerDown && volUpDown;
+        long now = System.currentTimeMillis();
+        if (powerDown && volUpDown) return true;
+        return comboTriggered && now - comboTime < COMBO_TAIL;
     }
 
-    /** 组合键是否处于触发后的拦截窗口内（供电源菜单/长按拦截用）。 */
+    /** 组合/录屏活动状态：录屏中（电源菜单/长按要拦）或组合短窗口。 */
     public static boolean comboActive() {
         long now = System.currentTimeMillis();
-        if (comboTime > 0 && now - comboTime < COMBO_INTERCEPT_WINDOW) return true;
-        return comboTriggered
-                && (now - comboTime < COMBO_INTERCEPT_WINDOW);
+        if (recording) return true;
+        return comboTriggered && now - comboTime < COMBO_TAIL;
     }
 
     public static boolean isRecording() {
         return recording;
     }
 
+    /** 由 HookLogic 在授权取消 / 录制结束广播时复位。 */
     public static void setRecording(boolean r) {
         recording = r;
-        if (r) {
-            recordingStartTime = System.currentTimeMillis();
-        }
+        comboTriggered = false;
+        if (r) recordingStartTime = System.currentTimeMillis();
     }
 }

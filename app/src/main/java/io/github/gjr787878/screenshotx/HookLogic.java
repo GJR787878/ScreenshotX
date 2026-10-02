@@ -1,16 +1,20 @@
 package io.github.gjr787878.screenshotx;
 
+import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.Point;
 import android.graphics.Rect;
+import android.os.Binder;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.SharedMemory;
-import android.media.AudioFormat;
-import android.media.AudioRecord;
-import android.media.MediaRecorder;
+import android.os.UserHandle;
 import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.system.OsConstants;
@@ -38,6 +42,7 @@ import de.robv.android.xposed.XposedHelpers;
 /** 实际 hook 逻辑，由现代入口 ModernEntry 调用。hook 仍用 LSPosed 兼容的 XposedBridge API。 */
 public class HookLogic {
 
+    private static final String PKG = "io.github.gjr787878.screenshotx";
     private static final String LOG_FILE = "/data/system/screenshotx_diag.log";
     private static Context sysContext;
     private static ClassLoader serverCl;
@@ -50,7 +55,8 @@ public class HookLogic {
             new java.util.concurrent.CopyOnWriteArraySet<>();
 
     // system_server 内常驻的 Root shell，省去每次触发冷启动 su
-    private static Process rootShellProc;
+    // 显式 java.lang.Process：本类另需 android.os.Process 的常量，避免同名歧义
+    private static java.lang.Process rootShellProc;
     private static DataOutputStream rootShellOs;
 
     public static synchronized void log(String msg) {
@@ -101,7 +107,7 @@ public class HookLogic {
                         sysContext = c;
                         log("init context captured");
                         installGesture(c);
-                        registerAudioReceiver(c);
+                        registerControlReceiver(c);
                     }
                 }
             });
@@ -206,7 +212,7 @@ public class HookLogic {
         }
 
         // 拦截分发阶段：interceptKeyBeforeDispatching 返回 -1 表示拦截，不分发到应用。
-        // 用于在组合键触发后的 2 秒窗口内，阻止系统把电源/音量上事件分发给
+        // 用于在组合键触发后的短窗口内，阻止系统把电源/音量上事件分发给
         // 上层（crDroid 的震动切换、长按电源菜单等默认功能在这一层或更早处理）。
         try {
             XposedBridge.hookAllMethods(pwm, "interceptKeyBeforeDispatching",
@@ -323,26 +329,48 @@ public class HookLogic {
      * 注意：仅对 FLAG_SECURE 有效；硬件级 Widevine L1 / secure decoder 的帧在
      * TrustZone 受保护缓冲中，不进普通内存，软件无法截取。
      */
-    /** 注册广播：app 进程（RecordService）停止录屏后通知 system_server 停音频录制。 */
-    private static void registerAudioReceiver(Context ctx) {
+
+    /** 注册控制广播：app 进程授权取消 / 录制结束时复位 KeyInterceptor。 */
+    private static void registerControlReceiver(Context ctx) {
         try {
             android.content.BroadcastReceiver r = new android.content.BroadcastReceiver() {
                 @Override public void onReceive(android.content.Context c, android.content.Intent i) {
-                    SystemAudioRecorder.stop();
+                    int caller = Binder.getCallingUid();
+                    if (!trustedCaller(ctx, caller)) {
+                        log("RECORD_ENDED ignored, untrusted caller uid=" + caller);
+                        return;
+                    }
+                    KeyInterceptor.setRecording(false);
+                    log("record state reset by app");
                 }
             };
-            if (android.os.Build.VERSION.SDK_INT >= 33) {
-                ctx.registerReceiver(r,
-                        new android.content.IntentFilter("io.github.gjr787878.screenshotx.STOP_AUDIO"),
-                        android.content.Context.RECEIVER_NOT_EXPORTED);
+            IntentFilter f = new IntentFilter(RecordService.ACTION_RECORD_ENDED);
+            if (Build.VERSION.SDK_INT >= 33) {
+                // 广播来自 app 进程，需 EXPORTED；onReceive 内校验调用方
+                ctx.registerReceiver(r, f, Context.RECEIVER_EXPORTED);
             } else {
-                ctx.registerReceiver(r,
-                        new android.content.IntentFilter("io.github.gjr787878.screenshotx.STOP_AUDIO"));
+                ctx.registerReceiver(r, f);
             }
-            log("audio stop receiver registered");
+            log("control receiver registered");
         } catch (Throwable t) {
-            log("audio receiver failed: " + t);
+            log("control receiver failed: " + t);
         }
+    }
+
+    /** 只接受 root/system 或 ScreenshotX 本包发来的结束广播，防第三方滥发。 */
+    private static boolean trustedCaller(Context ctx, int uid) {
+        // UserHandle.getAppId 为隐藏 API，内联其公式：appId = uid % PER_USER_RANGE(100000)
+        int appId = uid % 100000;
+        if (appId == android.os.Process.ROOT_UID || appId == android.os.Process.SYSTEM_UID) {
+            return true;
+        }
+        try {
+            String[] pkgs = ctx.getPackageManager().getPackagesForUid(uid);
+            if (pkgs != null) {
+                for (String p : pkgs) if (PKG.equals(p)) return true;
+            }
+        } catch (Throwable ignored) {}
+        return false;
     }
 
     private static void installSecureBypass() {
@@ -626,8 +654,7 @@ public class HookLogic {
             SharedMemory.unmap(bb);
             shm.setProtect(OsConstants.PROT_READ);
             Intent i = new Intent();
-            i.setClassName("io.github.gjr787878.screenshotx",
-                    "io.github.gjr787878.screenshotx.FloatingPreviewService");
+            i.setClassName(PKG, PKG + ".FloatingPreviewService");
             i.putExtra("shm", shm); // SharedMemory 为 Parcelable，Binder 自动传 ashmem fd
             c.startService(i);
             log("surface shot delivered via shm " + w + "x" + h);
@@ -651,8 +678,7 @@ public class HookLogic {
         sysContext = c;
         try {
             Intent svc = new Intent();
-            svc.setClassName("io.github.gjr787878.screenshotx",
-                    "io.github.gjr787878.screenshotx.ScreenshotService");
+            svc.setClassName(PKG, PKG + ".ScreenshotService");
             svc.setAction(ScreenshotService.ACTION_SHOOT);
             c.startService(svc);
             log("fire sent (service fallback)");
@@ -678,8 +704,11 @@ public class HookLogic {
             rootShellOs = new DataOutputStream(rootShellProc.getOutputStream());
             drainStatic(rootShellProc.getInputStream());
             drainStatic(rootShellProc.getErrorStream());
-            rootShellOs.writeBytes("appops set io.github.gjr787878.screenshotx"
+            rootShellOs.writeBytes("appops set " + PKG
                     + " SYSTEM_ALERT_WINDOW allow\n");
+            // 内录需要 RECORD_AUDIO（危险权限）：root 静默授予一次，永久有效
+            rootShellOs.writeBytes("pm grant " + PKG
+                    + " android.permission.RECORD_AUDIO\n");
             rootShellOs.flush();
             return true;
         } catch (Throwable t) {
@@ -702,11 +731,11 @@ public class HookLogic {
                 os = rootShellOs;
             }
             if (os == null) return false;
-            os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.ScreenshotService &\n");
+            os.writeBytes("am startservice -n " + PKG + "/.ScreenshotService &\n");
             os.writeBytes("rm -f " + shot + "\n");
             os.writeBytes("screencap -p " + shot + "\n");
             os.writeBytes("chmod 666 " + shot + "\n");
-            os.writeBytes("am startservice -n io.github.gjr787878.screenshotx/.FloatingPreviewService"
+            os.writeBytes("am startservice -n " + PKG + "/.FloatingPreviewService"
                     + " --es path " + shot + "\n");
             os.flush();
             log("direct shell shot dispatched");
@@ -721,7 +750,7 @@ public class HookLogic {
         }
     }
 
-    /** 触发录屏（由 KeyInterceptor 调用）。 */
+    /** 触发录屏（由 KeyInterceptor 调用）：拉起透明 Activity 请求 MediaProjection（异步）。 */
     public static void startRecording() {
         Context c = sysContext;
         if (c == null) c = resolveSystemContext();
@@ -731,33 +760,25 @@ public class HookLogic {
         }
         sysContext = c;
         try {
-            // 录制系统声音（REMOTE_SUBMIX 需要 system 权限，只能在 system_server 录）
-            if (Prefs.recAudio(c)) {
-                SystemAudioRecorder.start(c);
-            }
-            Intent svc = new Intent();
-            svc.setClassName("io.github.gjr787878.screenshotx",
-                    "io.github.gjr787878.screenshotx.RecordService");
-            svc.setAction(RecordService.ACTION_START);
-            c.startForegroundService(svc);
-            log("recording start sent");
+            Intent i = new Intent();
+            i.setClassName(PKG, PKG + ".ProjectionRequestActivity");
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            c.startActivity(i);
+            log("projection request activity sent");
             vibrate(c, 60L, 200);
         } catch (Throwable t) {
             log("startRecording failed: " + t);
         }
     }
 
-    /** 结束录屏（由 KeyInterceptor 调用）。 */
+    /** 结束录屏（由 KeyInterceptor 调用）：通知 RecordService 停止收尾。 */
     public static void stopRecording() {
         Context c = sysContext;
         if (c == null) c = resolveSystemContext();
         if (c == null) return;
         try {
-            // 电源键停止路径：先停音频录制（悬浮窗停止路径由 RecordService 发广播触发）
-            SystemAudioRecorder.stop();
             Intent svc = new Intent();
-            svc.setClassName("io.github.gjr787878.screenshotx",
-                    "io.github.gjr787878.screenshotx.RecordService");
+            svc.setClassName(PKG, PKG + ".RecordService");
             svc.setAction(RecordService.ACTION_STOP);
             c.startService(svc);
             log("recording stop sent");
@@ -766,80 +787,60 @@ public class HookLogic {
         }
     }
 
-    /** system_server 内录制系统声音（REMOTE_SUBMIX）。app 进程无 CAPTURE_AUDIO_OUTPUT
-     *  权限，只能在 system_server 录。PCM 写入 /data/local/tmp/sx_audio.pcm，
-     *  由 RecordService 编码 AAC 后与 screenrecord 视频合并。 */
-    private static class SystemAudioRecorder {
-        private static volatile AudioRecord record;
-        private static volatile boolean running = false;
-        private static volatile Thread writeThread;
-        private static final String PCM_PATH = "/data/local/tmp/sx_audio.pcm";
-
-        static synchronized void start(Context ctx) {
-            if (running) return;
-            try {
-                int sampleRate = 44100;
-                int minBuf = AudioRecord.getMinBufferSize(sampleRate,
-                        AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT);
-                int bufSize = Math.max(minBuf * 2, 8192);
-                AudioRecord ar = new AudioRecord(MediaRecorder.AudioSource.REMOTE_SUBMIX,
-                        sampleRate, AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT, bufSize);
-                if (ar.getState() != AudioRecord.STATE_INITIALIZED) {
-                    try { ar.release(); } catch (Throwable ignored) {}
-                    log("audio: REMOTE_SUBMIX init failed");
-                    return;
-                }
-                record = ar;
-                ar.startRecording();
-                running = true;
-                final int bs = bufSize;
-                writeThread = new Thread(() -> {
-                    byte[] buf = new byte[bs];
-                    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(PCM_PATH)) {
-                        while (running) {
-                            int n = record.read(buf, 0, buf.length);
-                            if (n > 0) fos.write(buf, 0, n);
-                            else if (n < 0) break;
+    /**
+     * SystemUI 进程 hook：ScreenshotX 请求 MediaProjection 时自动批准授权对话框
+     * （等价于用户点击“立即开始”），实现零交互。hook 未生效时用户手动点即可（降级）。
+     * Android 16：类在 com.android.systemui.mediaprojection.permission 包。
+     */
+    public static void installSystemUiHooks(ClassLoader cl) {
+        try {
+            Class<?> permActivity = XposedHelpers.findClass(
+                    "com.android.systemui.mediaprojection.permission.MediaProjectionPermissionActivity",
+                    cl);
+            XposedBridge.hookAllMethods(permActivity, "onCreate", new XC_MethodHook() {
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    Activity act = (Activity) p.thisObject;
+                    String pkg;
+                    try {
+                        pkg = (String) XposedHelpers.callMethod(act, "getLaunchedFromPackage");
+                        if (pkg == null) {
+                            pkg = (String) XposedHelpers.callMethod(act, "getCallingPackage");
                         }
-                        fos.flush();
                     } catch (Throwable t) {
-                        log("audio: write failed " + t);
+                        return;
                     }
-                }, "sx-audio-rec");
-                writeThread.start();
-                log("audio: system audio recording started (REMOTE_SUBMIX)");
-            } catch (Throwable t) {
-                log("audio: start failed " + t);
-                try { if (record != null) record.release(); } catch (Throwable ignored) {}
-                record = null;
-                running = false;
-            }
-        }
+                    if (!PKG.equals(pkg)) return;
 
-        static synchronized void stop() {
-            if (!running && record == null) return;
-            running = false;
-            try { if (record != null) record.stop(); } catch (Throwable ignored) {}
-            try { if (writeThread != null) writeThread.join(2000); } catch (Throwable ignored) {}
-            try { if (record != null) record.release(); } catch (Throwable ignored) {}
-            record = null;
-            writeThread = null;
-            // 让 app 进程可读音频文件
-            runSu("chmod 666 " + PCM_PATH);
-            log("audio: system audio recording stopped");
-        }
+                    int mode = 0;
+                    try {
+                        Class<?> kt = XposedHelpers.findClass(
+                                "com.android.systemui.mediaprojection.permission.ScreenShareOptionKt",
+                                cl);
+                        mode = XposedHelpers.getStaticIntField(kt, "ENTIRE_SCREEN");
+                    } catch (Throwable ignored) {}
 
-        private static void runSu(String cmd) {
-            try {
-                Process p = Runtime.getRuntime().exec("su");
-                DataOutputStream os = new DataOutputStream(p.getOutputStream());
-                os.writeBytes(cmd + "\n");
-                os.writeBytes("exit\n");
-                os.flush();
-                p.waitFor();
-                p.destroy();
-            } catch (Throwable ignored) {}
+                    try {
+                        // Android 16：grantMediaProjectionPermission(int mode, boolean cast, int displayId)
+                        XposedHelpers.callMethod(act, "grantMediaProjectionPermission",
+                                new Class<?>[] {int.class, boolean.class, int.class},
+                                mode, false, 0 /* Display.DEFAULT_DISPLAY */);
+                        log("projection consent auto-granted");
+                    } catch (Throwable g) {
+                        try {
+                            // 兜底：直接触发 PositiveButton 点击
+                            AlertDialog d = (AlertDialog)
+                                    XposedHelpers.getObjectField(act, "mDialog");
+                            d.getButton(DialogInterface.BUTTON_POSITIVE).performClick();
+                            log("projection consent auto-granted via positive button");
+                        } catch (Throwable g2) {
+                            log("projection auto-grant failed: " + g2);
+                        }
+                    }
+                }
+            });
+            log("SystemUI projection auto-grant hooks installed");
+        } catch (Throwable t) {
+            log("SystemUI hooks install failed: " + t);
         }
     }
 }

@@ -22,13 +22,17 @@ public class ModernEntry extends XposedModule {
     }
 
     /**
-     * 兜底：个别 LSPosed 版本仍可能通过 onPackageLoaded 上报 "android"。
-     * install 内部幂等，重复进入不会二次 hook。
+     * 兜底 / 分进程加载：
+     * - "android"：个别 LSPosed 版本通过 onPackageLoaded 上报系统框架，install 内部幂等
+     * - "com.android.systemui"：安装授权对话框自动批准 hook（录屏零交互）
      */
     @Override
     public void onPackageLoaded(XposedModuleInterface.PackageLoadedParam param) {
-        if ("android".equals(param.getPackageName())) {
+        String pkg = param.getPackageName();
+        if ("android".equals(pkg)) {
             HookLogic.install(param.getDefaultClassLoader());
+        } else if ("com.android.systemui".equals(pkg)) {
+            HookLogic.installSystemUiHooks(param.getDefaultClassLoader());
         }
     }
 }

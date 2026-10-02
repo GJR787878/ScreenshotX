@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 录屏：内录需要 RECORD_AUDIO；mediaProjection 类型前台服务 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <application
         android:name=".App"
@@ -31,6 +34,15 @@
             android:theme="@style/AppTheme"
             android:launchMode="singleInstance" />
 
+        <!-- 录屏授权透明中转：由 system_server 组合键拉起，请求 MediaProjection -->
+        <activity
+            android:name=".ProjectionRequestActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.SXTransparent"
+            android:launchMode="singleTop" />
+
         <service
             android:name=".ScreenshotService"
             android:exported="true"
@@ -49,12 +61,8 @@
         <service
             android:name=".RecordService"
             android:exported="true"
-            android:foregroundServiceType="specialUse"
-            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Screen recording" />
-        </service>
+            android:foregroundServiceType="mediaProjection"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
 
         <service
             android:name=".FloatingRecordService"

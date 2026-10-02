@@ -6,4 +6,13 @@
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
+
+    <!-- 授权中转 Activity 用：完全透明、无动画、不 dim 背景 -->
+    <style name="Theme.SXTransparent" parent="android:Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>

@@ -4,351 +4,505 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
-import android.content.Context;
 import android.content.Intent;
+import android.hardware.display.DisplayManager;
+import android.hardware.display.VirtualDisplay;
+import android.media.AudioAttributes;
+import android.media.AudioFormat;
+import android.media.AudioPlaybackCaptureConfiguration;
+import android.media.AudioRecord;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
-import android.media.MediaExtractor;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.os.Build;
+import android.os.HandlerThread;
+import android.os.Handler;
 import android.os.IBinder;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Surface;
+import android.view.WindowManager;
+import android.graphics.Point;
 
-import java.io.DataOutputStream;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 录屏服务：
- * - 用 root shell screenrecord 录屏视频到 /data/local/tmp
- * - 常驻单个 su 会话（只在首次启动时请求一次 root，之后复用，避免频繁授权提示）
- * - 系统声音：system_server 用 REMOTE_SUBMIX 录 PCM，本服务停止时编码 AAC 并合并
- * - 停止后通过 MediaSaver 保存到相册（Movies/Screenshots）
+ * 录屏服务（重写版，标准 MediaProjection 方案）：
+ * - 视频：MediaCodec(AVC) + createInputSurface + VirtualDisplay 镜像屏幕
+ * - 系统声音：AudioPlaybackCapture（tee 语义，只复制播放流，手机扬声器照常出声）
+ *   喂给 MediaCodec(AAC)，与视频同进程直接 mux，音视频同步
+ * - 输出先写 app 私有外部目录，停止后 MediaSaver 保存到相册（Movies/Screenshots）
+ * - 不再需要 root screenrecord、REMOTE_SUBMIX、PCM 中转与手工合并
  */
 public class RecordService extends Service {
 
     public static final String ACTION_START = "io.github.gjr787878.screenshotx.START";
     public static final String ACTION_STOP = "io.github.gjr787878.screenshotx.STOP";
+    /** 录制未在进行（授权取消 / 录制结束）：通知 system_server 复位按键状态。 */
+    public static final String ACTION_RECORD_ENDED =
+            "io.github.gjr787878.screenshotx.RECORD_ENDED";
+    public static final String EXTRA_RESULT_CODE = "resultCode";
+    public static final String EXTRA_RESULT_DATA = "resultData";
     public static final String CHANNEL_ID = "screenshotx_record";
+    private static final String TAG = "ScreenshotX";
 
-    // 常驻 root shell（静态，跨多次录屏复用，避免重复触发 Magisk 授权提示）
-    private static Process recordProc;
-    private static DataOutputStream recordOs;
-    private static String outputPath;
-    private static boolean recording = false;
+    private static final int SAMPLE_RATE = 44100;
+    /** 音频轨等待就绪超时：开始录屏后 3s 内仍无音频格式（无媒体播放）则放弃音频轨。 */
+    private static final long AUDIO_READY_TIMEOUT_MS = 3000;
 
-    @Override public IBinder onBind(Intent i) { return null; }
+    // 音频轨状态
+    private static final int AUDIO_PENDING = 0;
+    private static final int AUDIO_ACTIVE = 1;
+    private static final int AUDIO_DROPPED = 2;
 
-    @Override public void onCreate() {
-        super.onCreate();
-        createChannel();
+    private MediaProjection mediaProjection;
+    private VirtualDisplay virtualDisplay;
+    private MediaCodec videoEncoder;
+    private MediaCodec audioEncoder;
+    private AudioRecord audioRecord;
+    private MediaMuxer muxer;
+    private HandlerThread callbackThread;
+    private Handler callbackHandler;
+    private Thread drainThread;
+    private Thread audioCaptureThread;
+
+    private volatile boolean stopping = false;
+    private volatile boolean muxerStarted = false;
+    private final Object muxerLock = new Object();
+
+    private int videoTrack = -1;
+    private int audioState = AUDIO_PENDING;
+    private int audioTrack = -1;
+    private boolean wantAudio;
+    private String outputPath;
+    private int width, height, dpi;
+
+    private final MediaProjection.Callback projectionCallback = new MediaProjection.Callback() {
+        @Override
+        public void onStop() {
+            Log.d(TAG, "projection onStop (user/system stopped, e.g. lockscreen)");
+            requestStop("projection callback");
+        }
+    };
+
+    @Override
+    public IBinder onBind(Intent i) {
+        return null;
     }
 
-    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        createChannel();
+        callbackThread = new HandlerThread("sx-proj-cb");
+        callbackThread.start();
+        callbackHandler = new Handler(callbackThread.getLooper());
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent != null ? intent.getAction() : null;
         if (ACTION_START.equals(action)) {
-            startRecording();
+            startRecording(intent);
         } else if (ACTION_STOP.equals(action)) {
-            stopRecording();
+            requestStop("action stop");
         }
         return START_NOT_STICKY;
     }
 
-    /** 确保常驻 su 已就绪（只创建一次）。 */
-    private static synchronized void ensureSu() {
-        try {
-            if (recordProc != null && recordProc.isAlive()) return;
-            recordProc = Runtime.getRuntime().exec("su");
-            recordOs = new DataOutputStream(recordProc.getOutputStream());
-        } catch (Throwable t) {
-            Log.d("ScreenshotX", "ensureSu failed: " + t);
-            recordProc = null;
-            recordOs = null;
+    private void startRecording(Intent intent) {
+        if (mediaProjection != null || drainThread != null) return;
+
+        final int resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0);
+        final Intent data;
+        if (Build.VERSION.SDK_INT >= 33) {
+            data = intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent.class);
+        } else {
+            data = intent.getParcelableExtra(EXTRA_RESULT_DATA);
         }
-    }
+        if (data == null) {
+            Log.d(TAG, "start: no projection token, abort");
+            stopSelf();
+            return;
+        }
 
-    /** 往常驻 su 会话写一条命令。 */
-    private static void suWrite(String cmd) {
-        try {
-            if (recordOs == null) return;
-            recordOs.writeBytes(cmd + "\n");
-            recordOs.flush();
-        } catch (Throwable ignored) {}
-    }
+        // Android 14+：必须先 startForeground(mediaProjection) 再 getMediaProjection
+        startForeground(2, buildNotification("录屏中..."));
 
-    private void startRecording() {
-        if (recording) return;
-        ensureSu();
-        String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
-        outputPath = "/data/local/tmp/screenshotx_rec_" + ts + ".mp4";
         try {
-            // 先杀掉所有旧的 screenrecord 进程和 PID 文件
-            suWrite("pkill -f screenrecord");
-            suWrite("rm -f /data/local/tmp/sx_rec.pid");
-            // screenrecord 后台运行并记录 PID。停止时用 kill -2 (SIGINT) 正常收尾
+            // 真实屏幕尺寸 / dpi（偶数化）
+            WindowManager wm = getSystemService(WindowManager.class);
+            Point size = new Point();
+            wm.getDefaultDisplay().getRealSize(size);
+            width = size.x & ~1;
+            height = size.y & ~1;
+            DisplayMetrics metrics = getResources().getDisplayMetrics();
+            dpi = metrics.densityDpi;
+            wantAudio = Prefs.recAudio(this);
+
+            File dir = getExternalFilesDir(null);
+            String ts = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+            outputPath = new File(dir, "sx_rec_" + ts + ".mp4").getAbsolutePath();
+
+            MediaProjectionManager mpm = getSystemService(MediaProjectionManager.class);
+            mediaProjection = mpm.getMediaProjection(resultCode, data);
+            mediaProjection.registerCallback(projectionCallback, callbackHandler);
+
+            // ---- 视频编码器（输入 Surface）----
             int bitrate = Prefs.recBitrate(this);
-            suWrite("screenrecord --bit-rate " + bitrate
-                    + " --size 720x1280 --time-limit 1800 "
-                    + outputPath + " & echo $! > /data/local/tmp/sx_rec.pid");
-            recording = true;
-            KeyInterceptor.setRecording(true);
-            android.util.Log.d("ScreenshotX", "recording started: " + outputPath);
+            MediaFormat vf = MediaFormat.createVideoFormat(
+                    MediaFormat.MIMETYPE_VIDEO_AVC, width, height);
+            vf.setInteger(MediaFormat.KEY_BIT_RATE, bitrate);
+            vf.setInteger(MediaFormat.KEY_FRAME_RATE, 30);
+            vf.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
+            vf.setInteger(MediaFormat.KEY_COLOR_FORMAT,
+                    MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+            vf.setInteger(MediaFormat.KEY_BITRATE_MODE,
+                    MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR);
+            videoEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC);
+            videoEncoder.configure(vf, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            Surface inputSurface = videoEncoder.createInputSurface();
+            videoEncoder.start();
 
-            Notification notif = buildNotification("录屏中...");
-            startForeground(2, notif);
+            // ---- 音频（内录）----
+            if (wantAudio) {
+                setupAudio();
+            }
 
-            Intent fi = new Intent(this, FloatingRecordService.class);
-            fi.setAction(FloatingRecordService.ACTION_SHOW);
-            startService(fi);
+            muxer = new MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+
+            // ---- 虚拟显示屏：屏幕镜像到编码器 Surface ----
+            virtualDisplay = mediaProjection.createVirtualDisplay("ScreenshotX",
+                    width, height, dpi,
+                    DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                    inputSurface, null, null);
+
+            // 悬浮计时胶囊
+            try {
+                Intent fi = new Intent(this, FloatingRecordService.class)
+                        .setAction(FloatingRecordService.ACTION_SHOW);
+                startService(fi);
+            } catch (Throwable ignored) {}
+
+            // ---- 工作线程 ----
+            stopping = false;
+            muxerStarted = false;
+            if (wantAudio && audioRecord != null) {
+                audioCaptureThread = new Thread(this::captureAudioLoop, "sx-audio-cap");
+                audioCaptureThread.start();
+            } else {
+                wantAudio = false;
+            }
+            drainThread = new Thread(this::drainLoop, "sx-drain");
+            drainThread.start();
+            Log.d(TAG, "recording started " + width + "x" + height + " audio=" + wantAudio);
         } catch (Throwable t) {
-            android.util.Log.d("ScreenshotX", "recording start failed: " + t);
-            recording = false;
-            KeyInterceptor.setRecording(false);
+            Log.d(TAG, "start failed: " + t);
+            releaseQuietly();
+            sendBroadcast(new Intent(ACTION_RECORD_ENDED).setPackage(getPackageName()));
+            stopForeground(STOP_FOREGROUND_REMOVE);
             stopSelf();
         }
     }
 
-    private void stopRecording() {
-        if (!recording) return;
-        recording = false;
-        KeyInterceptor.setRecording(false);
-        final String path = outputPath;
-        outputPath = null;
+    /**
+     * 配置内录 AudioRecord（AudioPlaybackCapture）与 AAC 编码器。
+     * 任何一步失败：清理已建资源、置空，调用方按无音频继续（视频照常）。
+     */
+    private void setupAudio() {
+        try {
+            AudioPlaybackCaptureConfiguration cfg =
+                    new AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
+                            .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
+                            .addMatchingUsage(AudioAttributes.USAGE_GAME)
+                            .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN)
+                            .build();
+            AudioFormat af = new AudioFormat.Builder()
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                    .setSampleRate(SAMPLE_RATE)
+                    .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
+                    .build();
+            audioRecord = new AudioRecord.Builder()
+                    .setAudioPlaybackCaptureConfig(cfg)
+                    .setAudioFormat(af)
+                    .build();
+            if (audioRecord.getState() != AudioRecord.STATE_INITIALIZED) {
+                throw new IllegalStateException("AudioRecord not initialized");
+            }
 
-        // 立刻隐藏悬浮窗
-        Intent fi = new Intent(this, FloatingRecordService.class);
-        fi.setAction(FloatingRecordService.ACTION_HIDE);
-        startService(fi);
+            MediaFormat aff = MediaFormat.createAudioFormat(
+                    MediaFormat.MIMETYPE_AUDIO_AAC, SAMPLE_RATE, 2);
+            aff.setInteger(MediaFormat.KEY_AAC_PROFILE,
+                    MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+            aff.setInteger(MediaFormat.KEY_BIT_RATE, 128000);
+            aff.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384);
+            audioEncoder = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
+            audioEncoder.configure(aff, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            audioEncoder.start();
+            audioRecord.startRecording();
+        } catch (Throwable t) {
+            Log.d(TAG, "setupAudio failed, continue without audio: " + t);
+            try { if (audioEncoder != null) audioEncoder.release(); } catch (Throwable i) {}
+            try { if (audioRecord != null) audioRecord.release(); } catch (Throwable i) {}
+            audioEncoder = null;
+            audioRecord = null;
+        }
+    }
 
-        // 后台线程：收尾 screenrecord → 停音频 → 合并 → 保存（不阻塞主线程）
-        new Thread(() -> {
-            try {
-                // 1. 用同一个常驻 su 会话：SIGINT 正常收尾 screenrecord
-                if (recordOs != null) {
-                    suWrite("kill -2 $(cat /data/local/tmp/sx_rec.pid 2>/dev/null) 2>/dev/null");
-                    try { Thread.sleep(2000); } catch (Throwable ignored) {}
-                    suWrite("kill -2 $(cat /data/local/tmp/sx_rec.pid 2>/dev/null) 2>/dev/null");
-                    suWrite("sleep 1");
-                    suWrite("pkill -f screenrecord");
-                    // chmod 让 app 进程可读视频文件
-                    suWrite("chmod 666 " + path);
+    /** 音频 PCM 捕获 → AAC 编码器输入（input 端，与 drain 的 output 端并发，官方允许）。 */
+    private void captureAudioLoop() {
+        byte[] buf = new byte[8192];
+        AtomicLong totalFrames = new AtomicLong(0);
+        try {
+            while (!stopping) {
+                int n = audioRecord.read(buf, 0, buf.length);
+                if (n > 0) {
+                    int idx = audioEncoder.dequeueInputBuffer(10000);
+                    if (idx >= 0) {
+                        ByteBuffer ib = audioEncoder.getInputBuffer(idx);
+                        ib.clear();
+                        ib.put(buf, 0, n);
+                        long pts = totalFrames.get() * 1000000L / SAMPLE_RATE;
+                        audioEncoder.queueInputBuffer(idx, 0, n, pts, 0);
+                        // 立体声 16bit：每样本帧 4 字节
+                        totalFrames.addAndGet(n / 4);
+                    }
+                } else if (n < 0) {
+                    break;
                 }
-                // 2. 通知 system_server 停音频录制（悬浮窗停止路径；电源键路径已停过，幂等）
-                try {
-                    Intent br = new Intent("io.github.gjr787878.screenshotx.STOP_AUDIO");
-                    sendBroadcast(br);
-                } catch (Throwable ignored) {}
-                // 3. 等音频停止并写完（PCM flush + chmod）
-                try { Thread.sleep(2000); } catch (Throwable ignored) {}
+            }
+        } catch (Throwable t) {
+            Log.d(TAG, "audio capture loop: " + t);
+        } finally {
+            // 保证向编码器发 EOS，drain 才能结束
+            try {
+                int idx = audioEncoder.dequeueInputBuffer(10000);
+                if (idx >= 0) {
+                    audioEncoder.queueInputBuffer(idx, 0, 0,
+                            totalFrames.get() * 1000000L / SAMPLE_RATE,
+                            MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                }
+            } catch (Throwable ignored) {}
+        }
+    }
 
-                // 4. 有系统声音且 PCM 有效则编码 AAC 并合并
-                String finalPath = path;
-                File pcm = new File("/data/local/tmp/sx_audio.pcm");
-                if (Prefs.recAudio(this) && pcm.exists() && pcm.length() > 1024) {
-                    try {
-                        String out = getCacheDir() + "/sx_final_" + System.currentTimeMillis() + ".mp4";
-                        String aac = getCacheDir() + "/sx_audio_" + System.currentTimeMillis() + ".aac";
-                        encodePcmToAac(pcm.getAbsolutePath(), aac);
-                        muxVideoAudio(path, aac, out);
-                        finalPath = out;
-                        android.util.Log.d("ScreenshotX", "audio merged: " + out);
-                    } catch (Throwable t) {
-                        android.util.Log.d("ScreenshotX", "audio merge failed, keep video only: " + t);
+    /** 统一抽取视频/音频编码器输出并写 muxer，直到双轨 EOS。 */
+    private void drainLoop() {
+        MediaCodec.BufferInfo vi = new MediaCodec.BufferInfo();
+        MediaCodec.BufferInfo ai = new MediaCodec.BufferInfo();
+        boolean vEos = false;
+        boolean aEos = !wantAudio;
+        long audioDeadline = 0;
+
+        try {
+            while (!vEos || !aEos) {
+                if (!vEos) {
+                    vEos = drainEncoder(videoEncoder, vi, true, 0);
+                }
+                if (wantAudio && !aEos) {
+                    if (audioState == AUDIO_PENDING && videoTrack >= 0) {
+                        long now = System.currentTimeMillis();
+                        if (audioDeadline == 0) audioDeadline = now + AUDIO_READY_TIMEOUT_MS;
+                        if (now > audioDeadline) {
+                            // 迟迟无音频（无媒体播放）：放弃音频轨，停捕获
+                            audioState = AUDIO_DROPPED;
+                            Log.d(TAG, "audio track dropped (no playback at start)");
+                            try { audioRecord.stop(); } catch (Throwable ignored) {}
+                        }
+                    }
+                    aEos = drainEncoder(audioEncoder, ai, false, audioDeadline);
+                }
+                maybeStartMuxer();
+            }
+        } catch (Throwable t) {
+            Log.d(TAG, "drain loop: " + t);
+        }
+        finalizeAndSave();
+    }
+
+    /**
+     * 抽取单个编码器一次输出。
+     * 视频：FORMAT_CHANGED 时加视频轨；音频：按 audioState 加轨 / 丢弃。
+     * 返回是否收到 EOS。
+     */
+    private boolean drainEncoder(MediaCodec enc, MediaCodec.BufferInfo info,
+            boolean video, long audioDeadline) {
+        int idx = enc.dequeueOutputBuffer(info, 10000);
+        if (idx == MediaCodec.INFO_TRY_AGAIN_LATER) {
+            return false;
+        }
+        if (idx == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+            synchronized (muxerLock) {
+                if (!muxerStarted && muxer != null) {
+                    if (video) {
+                        videoTrack = muxer.addTrack(enc.getOutputFormat());
+                    } else if (audioState == AUDIO_PENDING) {
+                        audioTrack = muxer.addTrack(enc.getOutputFormat());
+                        audioState = AUDIO_ACTIVE;
                     }
                 }
-                // 5. 保存到相册
-                MediaSaver.saveVideo(this, finalPath);
-                android.util.Log.d("ScreenshotX", "video saved to gallery");
-            } catch (Throwable t) {
-                android.util.Log.d("ScreenshotX", "stop/save failed: " + t);
             }
-        }).start();
+            return false;
+        }
+        if (idx >= 0) {
+            boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
+            boolean canWrite = info.size > 0 && muxerStarted;
+            if (canWrite) {
+                ByteBuffer out = enc.getOutputBuffer(idx);
+                out.position(info.offset);
+                out.limit(info.offset + info.size);
+                synchronized (muxerLock) {
+                    if (muxer != null) {
+                        if (video) muxer.writeSampleData(videoTrack, out, info);
+                        else if (audioState == AUDIO_ACTIVE)
+                            muxer.writeSampleData(audioTrack, out, info);
+                    }
+                }
+            }
+            enc.releaseOutputBuffer(idx, false);
+            return eos;
+        }
+        return false;
+    }
 
-        stopForeground(true);
+    /** 视频轨就绪且音频轨已加/已放弃时启动 muxer（启动后不能再加轨）。 */
+    private void maybeStartMuxer() {
+        synchronized (muxerLock) {
+            if (muxerStarted || muxer == null) return;
+            boolean audioReady = !wantAudio
+                    || audioState == AUDIO_ACTIVE || audioState == AUDIO_DROPPED;
+            if (videoTrack >= 0 && audioReady) {
+                muxer.start();
+                muxerStarted = true;
+                Log.d(TAG, "muxer started");
+            }
+        }
+    }
+
+    /** drain 结束：停 muxer → 释放资源 → 保存相册 → 复位/停服。 */
+    private void finalizeAndSave() {
+        synchronized (muxerLock) {
+            try {
+                if (muxerStarted) muxer.stop();
+            } catch (Throwable t) {
+                Log.d(TAG, "muxer stop: " + t);
+            }
+            try {
+                if (muxer != null) muxer.release();
+            } catch (Throwable ignored) {}
+            muxer = null;
+        }
+
+        boolean saved = false;
+        if (muxerStarted && outputPath != null) {
+            try {
+                MediaSaver.saveVideo(this, outputPath);
+                saved = true;
+                Log.d(TAG, "video saved to gallery");
+            } catch (Throwable t) {
+                Log.d(TAG, "save failed: " + t);
+            }
+        }
+
+        releaseQuietly();
+        if (saved && outputPath != null) {
+            try { new File(outputPath).delete(); } catch (Throwable ignored) {}
+        }
+
+        sendBroadcast(new Intent(ACTION_RECORD_ENDED).setPackage(getPackageName()));
+        stopForeground(STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
 
-    /** PCM(44.1kHz mono 16bit) → AAC(ADTS) 文件。 */
-    private static void encodePcmToAac(String pcmPath, String aacPath) throws Exception {
-        MediaCodec codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC);
-        MediaFormat fmt = MediaFormat.createAudioFormat(MediaFormat.MIMETYPE_AUDIO_AAC, 44100, 1);
-        fmt.setInteger(MediaFormat.KEY_BIT_RATE, 128000);
-        fmt.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC);
-        fmt.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16384);
-        codec.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-        codec.start();
-
-        ByteBuffer[] inBufs = codec.getInputBuffers();
-        ByteBuffer[] outBufs = codec.getOutputBuffers();
-        MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-        FileInputStream fis = new FileInputStream(pcmPath);
-        FileOutputStream fos = new FileOutputStream(aacPath);
-        byte[] pcmBuf = new byte[65536];
-        long ptsUs = 0;
-        boolean inputEos = false;
-        boolean outputEos = false;
-
-        while (!outputEos) {
-            if (!inputEos) {
-                int inIdx = codec.dequeueInputBuffer(10000);
-                if (inIdx >= 0) {
-                    ByteBuffer inBuf = inBufs[inIdx];
-                    inBuf.clear();
-                    int n = fis.read(pcmBuf, 0, Math.min(inBuf.remaining(), pcmBuf.length));
-                    if (n < 0) {
-                        codec.queueInputBuffer(inIdx, 0, 0, ptsUs, MediaCodec.BUFFER_FLAG_END_OF_STREAM);
-                        inputEos = true;
-                    } else {
-                        inBuf.put(pcmBuf, 0, n);
-                        codec.queueInputBuffer(inIdx, 0, n, ptsUs, 0);
-                        ptsUs += (long) n * 1000000L / (2L * 44100L); // n 字节 = n/2 样本
-                    }
-                }
+    /** 请求停止（幂等，可由 ACTION_STOP 或 projection onStop 调用）。 */
+    private void requestStop(String reason) {
+        if (stopping) return;
+        stopping = true;
+        new Thread(() -> {
+            Log.d(TAG, "stopping (" + reason + ")");
+            try {
+                startService(new Intent(this, FloatingRecordService.class)
+                        .setAction(FloatingRecordService.ACTION_HIDE));
+            } catch (Throwable ignored) {}
+            // 解除音频捕获 read 阻塞，capture 线程退出并发音频 EOS
+            try { if (audioRecord != null) audioRecord.stop(); } catch (Throwable ignored) {}
+            // 视频 EOS（Surface 输入）
+            try {
+                if (videoEncoder != null) videoEncoder.signalEndOfInputStream();
+            } catch (Throwable t) {
+                Log.d(TAG, "signal EOS: " + t);
             }
-            int outIdx = codec.dequeueOutputBuffer(info, 10000);
-            if (outIdx >= 0) {
-                ByteBuffer outBuf = outBufs[outIdx];
-                boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-                if (info.size > 0 && (info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) == 0) {
-                    byte[] frame = new byte[info.size];
-                    outBuf.position(info.offset);
-                    outBuf.get(frame);
-                    writeAdtsHeader(fos, frame.length);
-                    fos.write(frame);
-                }
-                codec.releaseOutputBuffer(outIdx, false);
-                if (eos) outputEos = true;
+            try {
+                if (drainThread != null) drainThread.join(20000);
+            } catch (Throwable ignored) {}
+            // 兜底：drain 未正常结束，强制释放防泄漏
+            if (drainThread != null && drainThread.isAlive()) {
+                Log.d(TAG, "drain join timeout, force release");
+                releaseQuietly();
+                sendBroadcast(new Intent(ACTION_RECORD_ENDED).setPackage(getPackageName()));
+                stopForeground(STOP_FOREGROUND_REMOVE);
+                stopSelf();
             }
-        }
-        fis.close();
-        fos.flush();
-        fos.close();
-        codec.stop();
-        codec.release();
+        }, "sx-stop").start();
     }
 
-    /** 写 7 字节 ADTS 头（AAC-LC，44.1kHz，mono）。 */
-    private static void writeAdtsHeader(FileOutputStream fos, int frameLen) throws Exception {
-        int profile = 1;          // AAC LC
-        int sampleRateIndex = 4;  // 44100
-        int channelConfig = 1;    // mono
-        int fullLen = frameLen + 7;
-        byte[] h = new byte[7];
-        h[0] = (byte) 0xFF;
-        h[1] = (byte) 0xF1;
-        h[2] = (byte) (((profile & 0x3) << 6) | ((sampleRateIndex & 0xF) << 2) | ((channelConfig >> 2) & 0x1));
-        h[3] = (byte) (((channelConfig & 0x3) << 6) | ((fullLen >> 11) & 0x3));
-        h[4] = (byte) ((fullLen >> 3) & 0xFF);
-        h[5] = (byte) (((fullLen & 0x7) << 5) | 0x1F);
-        h[6] = (byte) 0xFC;
-        fos.write(h);
+    /** 释放全部录制资源（尽量逐项，互不影响）。 */
+    private void releaseQuietly() {
+        try { if (virtualDisplay != null) virtualDisplay.release(); } catch (Throwable ignored) {}
+        try { if (videoEncoder != null) { videoEncoder.stop(); videoEncoder.release(); } }
+        catch (Throwable ignored) {
+            try { if (videoEncoder != null) videoEncoder.release(); } catch (Throwable i) {}
+        }
+        try { if (audioEncoder != null) { audioEncoder.stop(); audioEncoder.release(); } }
+        catch (Throwable ignored) {
+            try { if (audioEncoder != null) audioEncoder.release(); } catch (Throwable i) {}
+        }
+        try { if (audioRecord != null) { audioRecord.stop(); audioRecord.release(); } }
+        catch (Throwable ignored) {
+            try { if (audioRecord != null) audioRecord.release(); } catch (Throwable i) {}
+        }
+        try {
+            if (mediaProjection != null) {
+                mediaProjection.unregisterCallback(projectionCallback);
+                mediaProjection.stop();
+            }
+        } catch (Throwable ignored) {}
+        virtualDisplay = null;
+        videoEncoder = null;
+        audioEncoder = null;
+        audioRecord = null;
+        mediaProjection = null;
     }
 
-    /** 把 h264 视频 + AAC 音频封装为最终 mp4（不转码，只重新封装）。 */
-    private static void muxVideoAudio(String videoPath, String aacPath, String outPath) throws Exception {
-        MediaExtractor vExt = new MediaExtractor();
-        vExt.setDataSource(videoPath);
-        int vIdx = -1;
-        for (int i = 0; i < vExt.getTrackCount(); i++) {
-            MediaFormat f = vExt.getTrackFormat(i);
-            String mime = f.getString(MediaFormat.KEY_MIME);
-            if (mime != null && mime.startsWith("video/")) { vIdx = i; break; }
-        }
-        MediaExtractor aExt = new MediaExtractor();
-        aExt.setDataSource(aacPath);
-        int aIdx = -1;
-        for (int i = 0; i < aExt.getTrackCount(); i++) {
-            MediaFormat f = aExt.getTrackFormat(i);
-            String mime = f.getString(MediaFormat.KEY_MIME);
-            if (mime != null && mime.startsWith("audio/")) { aIdx = i; break; }
-        }
-        if (vIdx < 0 || aIdx < 0) throw new RuntimeException("track not found v=" + vIdx + " a=" + aIdx);
-        vExt.selectTrack(vIdx);
-        aExt.selectTrack(aIdx);
-
-        MediaMuxer muxer = new MediaMuxer(outPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
-        int mv = muxer.addTrack(vExt.getTrackFormat(vIdx));
-        int ma = muxer.addTrack(aExt.getTrackFormat(aIdx));
-        muxer.start();
-
-        ByteBuffer vBuf = ByteBuffer.allocate(1 << 20);
-        ByteBuffer aBuf = ByteBuffer.allocate(1 << 20);
-        MediaCodec.BufferInfo vInfo = new MediaCodec.BufferInfo();
-        MediaCodec.BufferInfo aInfo = new MediaCodec.BufferInfo();
-
-        boolean vDone = false, aDone = false;
-        int vSize = 0, aSize = 0;
-        long vPts = 0, aPts = 0;
-        long aCount = 0;
-
-        while (!vDone || !aDone) {
-            if (!vDone && vSize <= 0) {
-                vSize = vExt.readSampleData(vBuf, 0);
-                if (vSize < 0) { vDone = true; vSize = 0; }
-                else vPts = vExt.getSampleTime();
-            }
-            if (!aDone && aSize <= 0) {
-                aSize = aExt.readSampleData(aBuf, 0);
-                if (aSize < 0) { aDone = true; aSize = 0; }
-                else {
-                    long raw = aExt.getSampleTime();
-                    // 若 extractor 不提供音频时间戳，用帧计数推算（1024 样本/帧）
-                    aPts = raw > 0 ? raw : aCount * 1024 * 1000000L / 44100L;
-                    aCount++;
-                }
-            }
-            if (vDone && aDone) break;
-            if (!vDone && (aDone || vPts <= aPts)) {
-                vInfo.offset = 0; vInfo.size = vSize;
-                vInfo.presentationTimeUs = vPts;
-                vInfo.flags = vExt.getSampleFlags();
-                muxer.writeSampleData(mv, vBuf, vInfo);
-                vSize = 0;
-                vExt.advance();
-            } else if (!aDone) {
-                aInfo.offset = 0; aInfo.size = aSize;
-                aInfo.presentationTimeUs = aPts;
-                aInfo.flags = aExt.getSampleFlags();
-                muxer.writeSampleData(ma, aBuf, aInfo);
-                aSize = 0;
-                aExt.advance();
-            }
-        }
-        muxer.stop();
-        muxer.release();
-        vExt.release();
-        aExt.release();
+    @Override
+    public void onDestroy() {
+        super.onDestroy();
+        releaseQuietly();
+        try { if (callbackThread != null) callbackThread.quitSafely(); } catch (Throwable ignored) {}
     }
 
     private void createChannel() {
-        if (Build.VERSION.SDK_INT >= 26) {
-            NotificationManager nm = getSystemService(NotificationManager.class);
-            NotificationChannel ch = new NotificationChannel(
-                    CHANNEL_ID, "录屏", NotificationManager.IMPORTANCE_LOW);
-            ch.setDescription("ScreenshotX 录屏服务");
-            nm.createNotificationChannel(ch);
-        }
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        NotificationChannel ch = new NotificationChannel(
+                CHANNEL_ID, "录屏", NotificationManager.IMPORTANCE_LOW);
+        ch.setDescription("ScreenshotX 录屏服务");
+        nm.createNotificationChannel(ch);
     }
 
     private Notification buildNotification(String text) {
-        Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                ? new Notification.Builder(this, CHANNEL_ID)
-                : new Notification.Builder(this);
-        b.setContentTitle("ScreenshotX")
+        return new Notification.Builder(this, CHANNEL_ID)
+                .setContentTitle("ScreenshotX")
                 .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_menu_camera)
-                .setOngoing(true);
-        return b.build();
-    }
-
-    /** 供外部查询是否在录屏。 */
-    public static boolean isRecording() {
-        return recording;
+                .setOngoing(true)
+                .build();
     }
 }
