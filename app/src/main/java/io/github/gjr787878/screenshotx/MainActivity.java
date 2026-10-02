@@ -14,7 +14,10 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import android.view.Gravity;
+
 import com.gjr.glassbutton.GlassCapsuleButton;
+import com.gjr.glassbutton.GlassNavBar;
 
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
@@ -27,7 +30,6 @@ public class MainActivity extends Activity {
 
     private TextView rootStatus;
     private LinearLayout shotPanel, recPanel;
-    private GlassCapsuleButton shotNavBtn, recNavBtn;
 
     @Override protected void attachBaseContext(Context base) {
         super.attachBaseContext(Lang.wrap(base));
@@ -37,11 +39,18 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle b) {
         super.onCreate(b);
 
-        // 整体垂直布局
+        // §3.4 平板断点：smallestScreenWidthDp >= 600
+        boolean tablet = getResources().getConfiguration().smallestScreenWidthDp >= 600;
+
+        // 根布局：手机竖排（导航在底）/ 平板横排（导航在左）
         LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        root.setOrientation(tablet ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         root.setPadding(dp(24), dp(48), dp(24), dp(16));
         root.setBackgroundColor(0xFF000000);
+
+        // 主列：标题/语言/Root/内容
+        LinearLayout mainCol = new LinearLayout(this);
+        mainCol.setOrientation(LinearLayout.VERTICAL);
 
         // 标题
         TextView title = new TextView(this);
@@ -49,13 +58,13 @@ public class MainActivity extends Activity {
         title.setTextColor(0xFFFFFFFF);
         title.setTextSize(28);
         title.setPadding(0, 0, 0, dp(16));
-        root.addView(title);
+        mainCol.addView(title);
 
         // 语言按钮
         final GlassCapsuleButton langBtn = new GlassCapsuleButton(this);
         updateLangBtn(langBtn);
         langBtn.setOnClickListener(v -> cycleLang());
-        root.addView(langBtn, marginLp(0, dp(8), 0, dp(4)));
+        mainCol.addView(langBtn, marginLp(0, dp(8), 0, dp(4)));
 
         // Root 状态
         rootStatus = new TextView(this);
@@ -63,7 +72,7 @@ public class MainActivity extends Activity {
         rootStatus.setTextColor(0xFFCCCCCC);
         rootStatus.setTextSize(15);
         rootStatus.setPadding(0, dp(12), 0, dp(12));
-        root.addView(rootStatus);
+        mainCol.addView(rootStatus);
         requestRoot();
         try { startForegroundService(new Intent(this, ScreenshotService.class)); } catch (Throwable ignored) {}
 
@@ -81,26 +90,39 @@ public class MainActivity extends Activity {
         recPanel.setVisibility(android.view.View.GONE);
         contentFrame.addView(recPanel);
 
-        root.addView(contentFrame, frameLp);
+        mainCol.addView(contentFrame, frameLp);
 
-        // ===== 底部导航栏：两个按钮切换 =====
-        LinearLayout navBar = new LinearLayout(this);
-        navBar.setOrientation(LinearLayout.HORIZONTAL);
-        navBar.setPadding(0, dp(8), 0, 0);
+        // ===== §3.6 D 导航栏：统一用 GlassNavBar（组件内置 §3.6.1 磨砂背景） =====
+        final GlassNavBar nav = new GlassNavBar(this);
+        nav.addItem(getDrawable(R.drawable.ic_nav_screenshot), getString(R.string.nav_screenshot));
+        nav.addItem(getDrawable(R.drawable.ic_nav_record), getString(R.string.nav_record));
+        nav.setSelected(0);
+        nav.setOnItemSelectedListener(index -> switchPanel(index == 0));
 
-        shotNavBtn = new GlassCapsuleButton(this);
-        shotNavBtn.setText("截屏设置");
-        shotNavBtn.setGlassSelected(true);
-        shotNavBtn.setOnClickListener(v -> switchPanel(true));
-        navBar.addView(shotNavBtn, new LinearLayout.LayoutParams(0, -2, 1f));
+        if (tablet) {
+            // §3.4/§3.6 D 平板：导航改左侧竖排悬浮胶囊，垂直居中、约半屏高
+            nav.setOrientation(LinearLayout.VERTICAL);
+            nav.setSideWidthDp(72f);
+            FrameLayout navSlot = new FrameLayout(this);
+            int navH = (int) (getResources().getDisplayMetrics().heightPixels * 0.5f);
+            FrameLayout.LayoutParams navInSlot =
+                    new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, navH);
+            navInSlot.gravity = Gravity.CENTER_VERTICAL;
+            navSlot.addView(nav, navInSlot);
 
-        recNavBtn = new GlassCapsuleButton(this);
-        recNavBtn.setText("录屏设置");
-        recNavBtn.setGlassSelected(false);
-        recNavBtn.setOnClickListener(v -> switchPanel(false));
-        navBar.addView(recNavBtn, new LinearLayout.LayoutParams(0, -2, 1f));
-
-        root.addView(navBar, marginLp(0, dp(8), 0, 0));
+            LinearLayout.LayoutParams slotLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_PARENT);
+            slotLp.rightMargin = dp(16);
+            root.addView(navSlot, slotLp);
+            root.addView(mainCol, new LinearLayout.LayoutParams(0, -1, 1f));
+        } else {
+            // 手机：主列占满，GlassNavBar 固定底部横排
+            root.addView(mainCol, new LinearLayout.LayoutParams(-1, 0, 1f));
+            LinearLayout.LayoutParams navLp =
+                    new LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT);
+            navLp.topMargin = dp(8);
+            root.addView(nav, navLp);
+        }
 
         setContentView(root);
     }
@@ -108,8 +130,6 @@ public class MainActivity extends Activity {
     private void switchPanel(boolean showShot) {
         shotPanel.setVisibility(showShot ? android.view.View.VISIBLE : android.view.View.GONE);
         recPanel.setVisibility(showShot ? android.view.View.GONE : android.view.View.VISIBLE);
-        shotNavBtn.setGlassSelected(showShot);
-        recNavBtn.setGlassSelected(!showShot);
     }
 
     // 截屏设置面板（原有的所有内容）
@@ -222,15 +242,37 @@ public class MainActivity extends Activity {
 
         // 标题
         TextView header = new TextView(this);
-        header.setText("录屏设置");
+        header.setText(R.string.rec_settings);
         header.setTextColor(0xFFFFFFFF);
         header.setTextSize(17);
         header.setPadding(0, dp(8), 0, dp(8));
         inner.addView(header);
 
+        // ===== 录屏功能总开关（§3.6 B 独立布尔开关） =====
+        final GlassCapsuleButton enableBtn = new GlassCapsuleButton(this);
+        boolean enabled = Prefs.recEnabled(this);
+        enableBtn.setText(enabled ? R.string.rec_enable_on : R.string.rec_enable_off);
+        enableBtn.setGlassSelected(enabled);
+        enableBtn.setOnClickListener(v -> {
+            boolean nv = !Prefs.recEnabled(this);
+            final String val = nv ? "1" : "0";
+            new Thread(() -> Prefs.putGlobal(Prefs.K_REC_ENABLED, val)).start();
+            enableBtn.setText(nv ? R.string.rec_enable_on : R.string.rec_enable_off);
+            enableBtn.setGlassSelected(nv);
+        });
+        inner.addView(enableBtn, marginLp(0, dp(4), 0, dp(4)));
+
+        TextView enableNote = new TextView(this);
+        enableNote.setText(R.string.rec_enable_note);
+        enableNote.setTextColor(0xFF999999);
+        enableNote.setTextSize(12);
+        enableNote.setLineSpacing(dp(2), 1f);
+        enableNote.setPadding(dp(2), dp(8), dp(2), dp(8));
+        inner.addView(enableNote);
+
         // 操作说明
         TextView info = new TextView(this);
-        info.setText("电源键 + 音量上键 = 开始录屏\n录屏中单击电源键 = 结束录屏\n小胶囊可拖动，单击结束录屏");
+        info.setText(R.string.rec_info);
         info.setTextColor(0xFFCCCCCC);
         info.setTextSize(14);
         info.setLineSpacing(dp(4), 1f);
@@ -239,7 +281,7 @@ public class MainActivity extends Activity {
 
         // 码率选择标题
         TextView bitrateTitle = new TextView(this);
-        bitrateTitle.setText("录屏码率");
+        bitrateTitle.setText(R.string.rec_bitrate_title);
         bitrateTitle.setTextColor(0xFFFFFFFF);
         bitrateTitle.setTextSize(15);
         bitrateTitle.setPadding(0, dp(8), 0, dp(4));
@@ -249,28 +291,28 @@ public class MainActivity extends Activity {
 
         // 低码率 1Mbps
         final GlassCapsuleButton lowBtn = new GlassCapsuleButton(this);
-        lowBtn.setText("低（1Mbps，省电不发热）");
+        lowBtn.setText(R.string.rec_bitrate_low);
         lowBtn.setGlassSelected(curBitrate == 1000000);
         lowBtn.setOnClickListener(v -> setBitrate(1000000, lowBtn));
         inner.addView(lowBtn, marginLp(0, dp(4), 0, dp(4)));
 
         // 中码率 2Mbps
         final GlassCapsuleButton midBtn = new GlassCapsuleButton(this);
-        midBtn.setText("中（2Mbps，平衡）");
+        midBtn.setText(R.string.rec_bitrate_mid);
         midBtn.setGlassSelected(curBitrate == 2000000);
         midBtn.setOnClickListener(v -> setBitrate(2000000, midBtn));
         inner.addView(midBtn, marginLp(0, dp(4), 0, dp(4)));
 
         // 高码率 4Mbps
         final GlassCapsuleButton highBtn = new GlassCapsuleButton(this);
-        highBtn.setText("高（4Mbps，清晰但发热）");
+        highBtn.setText(R.string.rec_bitrate_high);
         highBtn.setGlassSelected(curBitrate == 4000000);
         highBtn.setOnClickListener(v -> setBitrate(4000000, highBtn));
         inner.addView(highBtn, marginLp(0, dp(4), 0, dp(4)));
 
         // 说明
         TextView note = new TextView(this);
-        note.setText("码率越高视频越清晰，但手机发热和耗电也越明显。建议日常用中码率。");
+        note.setText(R.string.rec_bitrate_note);
         note.setTextColor(0xFF999999);
         note.setTextSize(12);
         note.setLineSpacing(dp(2), 1f);
@@ -279,36 +321,41 @@ public class MainActivity extends Activity {
 
         // 录制系统声音开关
         TextView audioTitle = new TextView(this);
-        audioTitle.setText("录制系统声音");
+        audioTitle.setText(R.string.rec_audio_title);
         audioTitle.setTextColor(0xFFFFFFFF);
         audioTitle.setTextSize(15);
         audioTitle.setPadding(0, dp(8), 0, dp(4));
         inner.addView(audioTitle);
 
+        appendAudioOptions(inner);
+
+        sv.addView(inner);
+        ll.addView(sv);
+        return ll;
+    }
+
+    /** 录屏面板：录制系统声音开关（独立方法）。 */
+    private void appendAudioOptions(LinearLayout inner) {
         final GlassCapsuleButton audioBtn = new GlassCapsuleButton(this);
         boolean audioOn = Prefs.recAudio(this);
-        audioBtn.setText(audioOn ? "录制系统声音：开" : "录制系统声音：关");
+        audioBtn.setText(audioOn ? R.string.rec_audio_on : R.string.rec_audio_off);
         audioBtn.setGlassSelected(audioOn);
         audioBtn.setOnClickListener(v -> {
             boolean nv = !Prefs.recAudio(this);
             final String val = nv ? "1" : "0";
             new Thread(() -> Prefs.putGlobal(Prefs.K_REC_AUDIO, val)).start();
-            audioBtn.setText(nv ? "录制系统声音：开" : "录制系统声音：关");
+            audioBtn.setText(nv ? R.string.rec_audio_on : R.string.rec_audio_off);
             audioBtn.setGlassSelected(nv);
         });
         inner.addView(audioBtn, marginLp(0, dp(4), 0, dp(4)));
 
         TextView audioNote = new TextView(this);
-        audioNote.setText("开启后录屏会同时录制手机内部声音（媒体/游戏）。部分机型内录需要系统支持，若录到无声可关闭。");
+        audioNote.setText(R.string.rec_audio_note);
         audioNote.setTextColor(0xFF999999);
         audioNote.setTextSize(12);
         audioNote.setLineSpacing(dp(2), 1f);
         audioNote.setPadding(dp(2), dp(12), dp(2), dp(8));
         inner.addView(audioNote);
-
-        sv.addView(inner);
-        ll.addView(sv);
-        return ll;
     }
 
     private void setBitrate(int bitrate, GlassCapsuleButton selectedBtn) {
@@ -328,7 +375,7 @@ public class MainActivity extends Activity {
         }
         final String val = String.valueOf(bitrate);
         new Thread(() -> Prefs.putGlobal(Prefs.K_REC_BITRATE, val)).start();
-        Toast.makeText(this, "录屏码率已设置", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, R.string.rec_bitrate_set, Toast.LENGTH_SHORT).show();
     }
 
     private LinearLayout.LayoutParams marginLp(int l, int t, int r, int btm) {
