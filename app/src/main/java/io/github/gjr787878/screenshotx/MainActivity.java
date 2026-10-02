@@ -122,8 +122,8 @@ public class MainActivity extends Activity {
             navLp.leftMargin = dp(20);
             root.addView(nav, navLp);
         } else {
-            // 手机：底部横排悬浮胶囊，横向铺满（左右边距 24dp），做薄到 48dp，底边距 24dp
-            nav.setHeightDp(48f);
+            // 手机：底部横排悬浮胶囊，横向铺满（左右边距 24dp），高度 72dp，底边距 24dp
+            nav.setHeightDp(72f);
             FrameLayout.LayoutParams navLp = new FrameLayout.LayoutParams(
                     FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT);
             navLp.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
