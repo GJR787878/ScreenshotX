@@ -12,6 +12,7 @@ import android.graphics.Rect;
 import android.os.Binder;
 import android.os.Build;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Looper;
 import android.os.SharedMemory;
 import android.os.UserHandle;
@@ -756,7 +757,11 @@ public class HookLogic {
         }
     }
 
-    /** 触发录屏（由 KeyInterceptor 调用）：拉起透明 Activity 请求 MediaProjection（异步）。 */
+    /**
+     * 触发录屏（由 KeyInterceptor 调用）。
+     * 优先：system_server 内直接经 MPMS 创建 token 并启动 RecordService，零弹窗；
+     * 失败降级：拉起透明 ProjectionRequestActivity 走正常授权（用户手点/SystemUI hook）。
+     */
     public static void startRecording() {
         Context c = sysContext;
         if (c == null) c = resolveSystemContext();
@@ -765,15 +770,76 @@ public class HookLogic {
             return;
         }
         sysContext = c;
+        if (startProjectionDirect(c)) {
+            vibrate(c, 60L, 200);
+            return;
+        }
         try {
             Intent i = new Intent();
             i.setClassName(PKG, PKG + ".ProjectionRequestActivity");
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             c.startActivity(i);
-            log("projection request activity sent");
+            log("projection request activity sent (fallback)");
             vibrate(c, 60L, 200);
         } catch (Throwable t) {
             log("startRecording failed: " + t);
+        }
+    }
+
+    /**
+     * system_server 内直接调用 MediaProjectionManagerService AIDL 创建 projection token，
+     * 构造结果 Intent 并直接启动 RecordService——完全绕过 SystemUI 授权界面（零弹窗）。
+     * 依据 AOSP android-16：
+     *  IMediaProjectionManager.createProjection(uid, pkg, TYPE_SCREEN_CAPTURE(0), false, displayId)
+     *  返回 IMediaProjection；结果 Intent 放 EXTRA_MEDIA_PROJECTION=projection.asBinder()，
+     *  app 侧 MediaProjectionManager.getMediaProjection(RESULT_OK, data) 即可使用。
+     *  MPMS 就在本进程，MANAGE_MEDIA_PROJECTION 对 system uid 放行。
+     */
+    private static boolean startProjectionDirect(Context c) {
+        try {
+            int appUid = c.getPackageManager().getPackageUid(PKG, 0);
+
+            Class<?> smClass = Class.forName("android.os.ServiceManager");
+            Method getService = smClass.getMethod("getService", String.class);
+            IBinder mpmsBinder = (IBinder) getService.invoke(null, "media_projection");
+            if (mpmsBinder == null) {
+                log("direct projection: media_projection service missing");
+                return false;
+            }
+
+            Class<?> stubClass =
+                    Class.forName("android.media.projection.IMediaProjectionManager$Stub");
+            Method asInterface = stubClass.getMethod("asInterface", IBinder.class);
+            Object mpms = asInterface.invoke(null, mpmsBinder);
+
+            Method createProjection = mpms.getClass().getMethod("createProjection",
+                    int.class, String.class, int.class, boolean.class, int.class);
+            Object projection = createProjection.invoke(mpms,
+                    appUid, PKG, 0 /* TYPE_SCREEN_CAPTURE */,
+                    false /* permanentGrant */, 0 /* DEFAULT_DISPLAY */);
+            if (projection == null) return false;
+
+            Class<?> iProjectionClass =
+                    Class.forName("android.media.projection.IMediaProjection");
+            Method asBinder = iProjectionClass.getMethod("asBinder");
+            IBinder token = (IBinder) asBinder.invoke(projection);
+
+            Intent data = new Intent();
+            // Intent.putExtra(String, IBinder) 为 @hide，反射调用
+            Method putBinder = Intent.class.getMethod("putExtra", String.class, IBinder.class);
+            putBinder.invoke(data, "android.media.projection.extra.EXTRA_MEDIA_PROJECTION", token);
+
+            Intent svc = new Intent();
+            svc.setClassName(PKG, PKG + ".RecordService");
+            svc.setAction(PKG + ".START");
+            svc.putExtra("resultCode", Activity.RESULT_OK);
+            svc.putExtra("resultData", data);
+            c.startForegroundService(svc);
+            log("projection created directly via MPMS, RecordService launched (no dialog)");
+            return true;
+        } catch (Throwable t) {
+            log("direct projection failed: " + t);
+            return false;
         }
     }
 
